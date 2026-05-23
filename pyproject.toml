@@ -1,0 +1,38 @@
+[project]
+name = "adelaidasofia-linear-mcp"
+version = "0.1.0"
+description = "Multi-workspace Linear MCP server with PAT auth — drop-in replacement for the official OAuth-only Linear connector."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Adelaida Diaz-Roa" }]
+keywords = ["mcp", "model-context-protocol", "claude", "fastmcp", "linear", "graphql", "issue-tracking"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+dependencies = [
+    "fastmcp>=3.2.4",
+    "httpx>=0.27.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/adelaidasofia/linear-mcp"
+Repository = "https://github.com/adelaidasofia/linear-mcp"
+Issues = "https://github.com/adelaidasofia/linear-mcp/issues"
+Changelog = "https://github.com/adelaidasofia/linear-mcp/blob/main/CHANGELOG.md"
+
+[project.scripts]
+linear-mcp = "linear_mcp.server:main"
+
+[build-system]
+requires = ["setuptools>=82.0.1", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["linear_mcp*"]

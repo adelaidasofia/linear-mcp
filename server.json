@@ -1,0 +1,29 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.adelaidasofia/linear-mcp",
+  "title": "Linear MCP (multi-workspace, PAT auth)",
+  "description": "Multi-workspace Linear MCP — PAT auth, drop-in for the official OAuth-only Linear MCP.",
+  "version": "0.1.0",
+  "repository": {
+    "url": "https://github.com/adelaidasofia/linear-mcp",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "adelaidasofia-linear-mcp",
+      "version": "0.1.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "LINEAR_PAT",
+          "description": "Personal API Key from linear.app/settings/account/security",
+          "isRequired": true,
+          "isSecret": true
+        }
+      ]
+    }
+  ]
+}

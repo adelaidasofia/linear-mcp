@@ -1,0 +1,74 @@
+{
+  "manifest_version": "0.4",
+  "name": "linear-mcp",
+  "display_name": "Linear MCP (multi-workspace, PAT auth)",
+  "version": "0.1.0",
+  "description": "Multi-workspace Linear MCP server with PAT auth — drop-in replacement for the official OAuth-only Linear connector.",
+  "author": {
+    "name": "adelaidasofia",
+    "url": "https://github.com/adelaidasofia"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/adelaidasofia/linear-mcp.git"
+  },
+  "homepage": "https://github.com/adelaidasofia/linear-mcp",
+  "documentation": "https://github.com/adelaidasofia/linear-mcp#readme",
+  "support": "https://github.com/adelaidasofia/linear-mcp/issues",
+  "license": "MIT",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "claude",
+    "fastmcp",
+    "linear",
+    "graphql",
+    "issue-tracking"
+  ],
+  "server": {
+    "type": "python",
+    "entry_point": "linear_mcp/server.py",
+    "mcp_config": {
+      "command": "python3",
+      "args": [
+        "-m",
+        "linear_mcp.server"
+      ],
+      "env": {
+        "LINEAR_WORKSPACES": "${user_config.workspaces}",
+        "LINEAR_PRIMARY_WORKSPACE": "${user_config.primary}",
+        "LINEAR_PAT": "${user_config.pat}"
+      }
+    }
+  },
+  "tools_generated": true,
+  "compatibility": {
+    "claude_desktop": ">=0.10.0",
+    "platforms": [
+      "darwin",
+      "win32",
+      "linux"
+    ]
+  },
+  "user_config": {
+    "workspaces": {
+      "type": "string",
+      "title": "Workspace aliases (comma-separated)",
+      "description": "e.g. onde,mycelium — leave blank to use a single PAT below",
+      "required": false
+    },
+    "primary": {
+      "type": "string",
+      "title": "Primary workspace alias",
+      "description": "Default workspace when a tool omits the workspace parameter",
+      "required": false
+    },
+    "pat": {
+      "type": "string",
+      "title": "Linear Personal API Key",
+      "description": "Generate at linear.app/settings/account/security. For multi-workspace setups, add per-workspace PATs in ~/.claude/linear-mcp/admin.env (LINEAR_PAT_ONDE, LINEAR_PAT_MYCELIUM, etc.)",
+      "required": true,
+      "sensitive": true
+    }
+  }
+}
