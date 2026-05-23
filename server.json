@@ -24,6 +24,23 @@
           "isSecret": true
         }
       ]
+    },
+    {
+      "registryType": "mcpb",
+      "identifier": "https://github.com/adelaidasofia/linear-mcp/releases/download/v0.1.0/linear-mcp.mcpb",
+      "version": "0.1.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "fileSha256": "a2eb1c2c7ac245c04f9d91e808db2378b708e64ae81ba1f4c4b21de96356ec04",
+      "environmentVariables": [
+        {
+          "name": "LINEAR_PAT",
+          "description": "Personal API Key from linear.app/settings/account/security",
+          "isRequired": true,
+          "isSecret": true
+        }
+      ]
     }
   ]
 }
