@@ -175,6 +175,54 @@ def register(mcp) -> None:
         )
 
 
+    @mcp.tool()
+    def bulk_save_issues(ids: list[str],
+                         workspace: str | None = None,
+                         state_id: str | None = None,
+                         assignee_id: str | None = None,
+                         project_id: str | None = None,
+                         cycle_id: str | None = None,
+                         priority: int | None = None,
+                         label_ids: list[str] | None = None,
+                         due_date: str | None = None,
+                         estimate: int | None = None) -> dict[str, Any]:
+        """Apply the same update to multiple issues in one round-trip.
+
+        `ids` is a list of issue UUIDs. Every other arg is an
+        optional field to set on all of them (skip args you don't
+        want to change). Linear's `issueBatchUpdate` mutation does
+        the work server-side — way faster than N separate `save_issue`
+        calls for bulk ops like "mark these 50 as Done" or "reassign
+        these to me."
+        """
+        if not ids:
+            raise ValueError("bulk_save_issues: ids must be non-empty")
+        client = client_for(workspace)
+        resolved_assignee = assignee_id
+        if assignee_id and assignee_id.lower() == "me":
+            resolved_assignee = (client.viewer().get("id") or "").strip() or None
+        input_payload = clean({
+            "stateId": state_id,
+            "assigneeId": resolved_assignee,
+            "projectId": project_id,
+            "cycleId": cycle_id,
+            "priority": priority,
+            "labelIds": label_ids,
+            "dueDate": due_date,
+            "estimate": estimate,
+        })
+        if not input_payload:
+            raise ValueError("bulk_save_issues: at least one field to update is required")
+        params = {"workspace": workspace, "ids": ids, **input_payload}
+        return run_tool(
+            "bulk_save_issues", params,
+            lambda: client.request(
+                queries.ISSUE_BATCH_UPDATE, {"ids": ids, "input": input_payload}
+            ),
+            lambda r: f"{len((r.get('issueBatchUpdate') or {}).get('issues') or [])} updated",
+        )
+
+
 def _looks_like_uuid(s: str) -> bool:
     """Cheap UUID heuristic. 36 chars with hyphens at the right slots."""
     if len(s) != 36:

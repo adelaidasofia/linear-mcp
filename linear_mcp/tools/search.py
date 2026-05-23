@@ -1,79 +1,90 @@
-"""search_documentation — search the public Linear developer docs.
+"""Workspace search: search_issues, search_documents, search_projects, semantic_search.
 
-This mirrors the official Linear MCP's `search_documentation` tool.
-Linear publishes their dev docs at linear.app/developers; we hit the
-public Algolia search index that powers the docs site so an agent
-working in a Linear context can answer "how do I X?" without leaving
-the MCP.
+v0.2.0 replaces v0.1.0's `search_documentation` (which hit a non-existent
+endpoint — see CHANGELOG) with real GraphQL-backed search across the
+workspace's own data.
 
-If Linear's docs search ever moves to a different backend, only this
-module needs to change.
+Confirmed via schema introspection 2026-05-23: Linear's GraphQL exposes
+searchIssues, searchDocuments, searchProjects, semanticSearch. There is
+NO `searchDocumentation` field. For Linear developer docs, use the docs
+site directly at linear.app/developers.
 """
 
 from __future__ import annotations
 
-import json
-import os
 from typing import Any
-from urllib.parse import quote
 
-import httpx
-
-from ._common import run_tool
-
-DOCS_SEARCH_URL = os.environ.get(
-    "LINEAR_DOCS_SEARCH_URL",
-    "https://linear.app/api/docs/search",
-)
+from .. import queries
+from ._common import client_for, run_tool, page_summary
 
 
 def register(mcp) -> None:
     @mcp.tool()
-    def search_documentation(query: str, limit: int = 5) -> dict[str, Any]:
-        """Search the Linear developer documentation.
+    def search_issues(query: str, workspace: str | None = None,
+                      first: int = 25, after: str | None = None) -> dict[str, Any]:
+        """Full-text search across issues in the workspace.
 
-        Returns up to `limit` hits with title, url, and a snippet.
-        Useful when an agent needs to look up GraphQL field shapes,
-        webhook payloads, or authentication patterns mid-task.
+        Backed by Linear's `searchIssues` GraphQL field (verified via
+        introspection). Returns nodes with the standard issue shape plus
+        a `totalCount` so the agent knows how many more hits exist beyond
+        the current page.
         """
-        params = {"query": query, "limit": limit}
-
-        def _run() -> dict[str, Any]:
-            try:
-                resp = httpx.get(
-                    DOCS_SEARCH_URL,
-                    params={"q": query, "limit": limit},
-                    timeout=15,
-                    headers={"User-Agent": "linear-mcp/0.1.0"},
-                )
-                if resp.status_code != 200:
-                    return {
-                        "query": query,
-                        "hits": [],
-                        "warning": (
-                            f"docs search returned HTTP {resp.status_code}. "
-                            "Try linear.app/developers in a browser."
-                        ),
-                    }
-                data = resp.json() if resp.text.strip().startswith("{") else {}
-            except (httpx.RequestError, json.JSONDecodeError) as e:
-                return {
-                    "query": query,
-                    "hits": [],
-                    "warning": f"docs search unavailable: {e}",
-                    "fallback_url": f"https://linear.app/developers?q={quote(query)}",
-                }
-            hits = data.get("hits") or data.get("results") or []
-            normalized = []
-            for hit in hits[:limit]:
-                normalized.append({
-                    "title": hit.get("title") or hit.get("name") or "",
-                    "url": hit.get("url") or hit.get("link") or "",
-                    "snippet": (hit.get("snippet") or hit.get("description") or "")[:300],
-                })
-            return {"query": query, "hits": normalized}
-
+        params = {"workspace": workspace, "query": query, "first": first, "after": after}
         return run_tool(
-            "search_documentation", params, _run,
-            lambda r: f"{len(r.get('hits', []))} hits",
+            "search_issues", params,
+            lambda: client_for(workspace).request(
+                queries.SEARCH_ISSUES,
+                {"term": query, "first": first, "after": after},
+            ),
+            lambda r: f"{(r.get('searchIssues') or {}).get('totalCount', 0)} total",
+        )
+
+    @mcp.tool()
+    def search_documents(query: str, workspace: str | None = None,
+                         first: int = 25, after: str | None = None) -> dict[str, Any]:
+        """Full-text search across workspace documents (NOT Linear's dev docs)."""
+        params = {"workspace": workspace, "query": query, "first": first, "after": after}
+        return run_tool(
+            "search_documents", params,
+            lambda: client_for(workspace).request(
+                queries.SEARCH_DOCUMENTS,
+                {"term": query, "first": first, "after": after},
+            ),
+            lambda r: f"{(r.get('searchDocuments') or {}).get('totalCount', 0)} total",
+        )
+
+    @mcp.tool()
+    def search_projects(query: str, workspace: str | None = None,
+                        first: int = 25, after: str | None = None) -> dict[str, Any]:
+        """Full-text search across projects in the workspace."""
+        params = {"workspace": workspace, "query": query, "first": first, "after": after}
+        return run_tool(
+            "search_projects", params,
+            lambda: client_for(workspace).request(
+                queries.SEARCH_PROJECTS,
+                {"term": query, "first": first, "after": after},
+            ),
+            lambda r: f"{(r.get('searchProjects') or {}).get('totalCount', 0)} total",
+        )
+
+    @mcp.tool()
+    def semantic_search(query: str, workspace: str | None = None,
+                        first: int = 20, after: str | None = None) -> dict[str, Any]:
+        """Semantic search across the entire workspace.
+
+        Returns heterogeneous nodes (issues, projects, documents, comments,
+        initiatives). Each node carries `__typename` so the agent can branch
+        on entity kind.
+
+        Use this when the search target is conceptual ("payment retry
+        logic") rather than exact-string ("PAY-123").
+        """
+        params = {"workspace": workspace, "query": query, "first": first, "after": after}
+        return run_tool(
+            "semantic_search", params,
+            lambda: client_for(workspace).request(
+                queries.SEMANTIC_SEARCH,
+                {"term": query, "first": first, "after": after},
+            ),
+            lambda r: f"{len((r.get('semanticSearch') or {}).get('nodes') or [])} hits",
         )

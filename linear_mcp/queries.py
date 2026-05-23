@@ -393,10 +393,309 @@ mutation ProjectUpdateCreate($input: ProjectUpdateCreateInput!) {
 }
 """
 
-# --- Documentation search ---------------------------------------------------
+# --- Search (workspace-scoped, real GraphQL fields) -------------------------
+# Confirmed via schema introspection 2026-05-23 against api.linear.app/graphql.
+# Linear exposes: searchIssues, searchDocuments, searchProjects, semanticSearch.
+# There is NO `searchDocumentation` field for dev-docs search — that surface
+# was removed from v0.2.0.
 
-# Linear exposes documentation search via the public Linear docs site search
-# API (not the internal workspace document search). We surface it as a tool
-# so agents can answer Linear-API questions without leaving the MCP.
-# The actual call is an HTTP GET against linear.app/docs/search?q=... and
-# we render the top N hits. See tools/search.py.
+SEARCH_ISSUES = f"""
+query SearchIssues($term: String!, $first: Int, $after: String) {{
+  searchIssues(term: $term, first: $first, after: $after) {{
+    nodes {{ {ISSUE_FIELDS} }}
+    {PAGE_INFO}
+    totalCount
+  }}
+}}
+"""
+
+SEARCH_DOCUMENTS = f"""
+query SearchDocuments($term: String!, $first: Int, $after: String) {{
+  searchDocuments(term: $term, first: $first, after: $after) {{
+    nodes {{ {DOCUMENT_FIELDS} }}
+    {PAGE_INFO}
+    totalCount
+  }}
+}}
+"""
+
+SEARCH_PROJECTS = f"""
+query SearchProjects($term: String!, $first: Int, $after: String) {{
+  searchProjects(term: $term, first: $first, after: $after) {{
+    nodes {{ {PROJECT_FIELDS} }}
+    {PAGE_INFO}
+    totalCount
+  }}
+}}
+"""
+
+# Semantic search across issues, projects, documents, comments. Returns
+# heterogeneous results — node typename surfaces the entity kind.
+SEMANTIC_SEARCH = """
+query SemanticSearch($term: String!, $first: Int, $after: String) {
+  semanticSearch(term: $term, first: $first, after: $after) {
+    nodes {
+      __typename
+      ... on Issue { id identifier title url priorityLabel
+        state { name type } team { key name } assignee { name } }
+      ... on Project { id name url state }
+      ... on Document { id title url }
+      ... on Comment { id body url issue { identifier title } }
+      ... on Initiative { id name url }
+    }
+    pageInfo { hasNextPage endCursor }
+  }
+}
+"""
+
+
+# --- Webhooks ---------------------------------------------------------------
+
+WEBHOOK_FIELDS = """
+  id label url enabled resourceTypes allPublicTeams
+  team { id key name }
+  creator { id name }
+  createdAt updatedAt
+"""
+
+LIST_WEBHOOKS = f"""
+query ListWebhooks($first: Int, $after: String) {{
+  webhooks(first: $first, after: $after) {{
+    nodes {{ {WEBHOOK_FIELDS} }}
+    {PAGE_INFO}
+  }}
+}}
+"""
+
+GET_WEBHOOK = f"query GetWebhook($id: String!) {{ webhook(id: $id) {{ {WEBHOOK_FIELDS} }} }}"
+
+WEBHOOK_CREATE = f"""
+mutation WebhookCreate($input: WebhookCreateInput!) {{
+  webhookCreate(input: $input) {{
+    success
+    webhook {{ {WEBHOOK_FIELDS} }}
+  }}
+}}
+"""
+
+WEBHOOK_UPDATE = f"""
+mutation WebhookUpdate($id: String!, $input: WebhookUpdateInput!) {{
+  webhookUpdate(id: $id, input: $input) {{
+    success
+    webhook {{ {WEBHOOK_FIELDS} }}
+  }}
+}}
+"""
+
+WEBHOOK_DELETE = """
+mutation WebhookDelete($id: String!) {
+  webhookDelete(id: $id) { success }
+}
+"""
+
+
+# --- Notifications (inbox) --------------------------------------------------
+
+NOTIFICATION_FIELDS = """
+  id type emailedAt readAt snoozedUntilAt unsnoozedAt
+  user { id name displayName }
+  actor { id name displayName }
+  externalUserActor { id name }
+  ... on IssueNotification {
+    issue { id identifier title url state { name } }
+    team { id key name }
+    comment { id body url }
+  }
+  ... on ProjectNotification {
+    project { id name url }
+  }
+  ... on OauthClientApprovalNotification {
+    oauthClientApproval { id }
+  }
+"""
+
+LIST_NOTIFICATIONS = f"""
+query ListNotifications($first: Int, $after: String, $filter: NotificationFilter) {{
+  notifications(first: $first, after: $after, filter: $filter) {{
+    nodes {{
+      __typename
+      {NOTIFICATION_FIELDS}
+    }}
+    {PAGE_INFO}
+    totalCount
+  }}
+}}
+"""
+
+GET_NOTIFICATION = f"""
+query GetNotification($id: String!) {{
+  notification(id: $id) {{
+    __typename
+    {NOTIFICATION_FIELDS}
+  }}
+}}
+"""
+
+NOTIFICATIONS_UNREAD_COUNT = """
+query NotificationsUnreadCount {
+  notificationsUnreadCount
+}
+"""
+
+NOTIFICATION_MARK_READ = """
+mutation NotificationUpdate($id: String!, $input: NotificationUpdateInput!) {
+  notificationUpdate(id: $id, input: $input) {
+    success
+    notification { id readAt }
+  }
+}
+"""
+
+NOTIFICATION_MARK_READ_ALL = """
+mutation NotificationMarkReadAll($input: NotificationUpdateAllInput!) {
+  notificationMarkReadAll(input: $input) { success }
+}
+"""
+
+NOTIFICATION_ARCHIVE = """
+mutation NotificationArchive($id: String!) {
+  notificationArchive(id: $id) { success entity { id archivedAt } }
+}
+"""
+
+
+# --- Attachments ------------------------------------------------------------
+
+ATTACHMENT_FIELDS = """
+  id title subtitle url source sourceType groupBySource metadata
+  issue { id identifier title }
+  creator { id name displayName }
+  createdAt updatedAt
+"""
+
+LIST_ATTACHMENTS_FOR_ISSUE = f"""
+query AttachmentsForIssue($issue_id: String!, $first: Int, $after: String) {{
+  attachments(filter: {{ issue: {{ id: {{ eq: $issue_id }} }} }}, first: $first, after: $after) {{
+    nodes {{ {ATTACHMENT_FIELDS} }}
+    {PAGE_INFO}
+  }}
+}}
+"""
+
+ATTACHMENTS_FOR_URL = f"""
+query AttachmentsForURL($url: String!, $first: Int) {{
+  attachmentsForURL(url: $url, first: $first) {{
+    nodes {{ {ATTACHMENT_FIELDS} }}
+  }}
+}}
+"""
+
+GET_ATTACHMENT = f"query GetAttachment($id: String!) {{ attachment(id: $id) {{ {ATTACHMENT_FIELDS} }} }}"
+
+ATTACHMENT_LINK_URL = f"""
+mutation AttachmentLinkURL(
+  $issueId: String!, $url: String!, $title: String, $iconUrl: String
+) {{
+  attachmentLinkURL(issueId: $issueId, url: $url, title: $title, iconUrl: $iconUrl) {{
+    success
+    attachment {{ {ATTACHMENT_FIELDS} }}
+  }}
+}}
+"""
+
+ATTACHMENT_DELETE = """
+mutation AttachmentDelete($id: String!) {
+  attachmentDelete(id: $id) { success }
+}
+"""
+
+
+# --- Issue relations (blocks / blocked-by / duplicates / related) -----------
+
+RELATION_FIELDS = """
+  id type
+  issue { id identifier title }
+  relatedIssue { id identifier title }
+  createdAt updatedAt
+"""
+
+LIST_ISSUE_RELATIONS = f"""
+query ListIssueRelations($first: Int, $after: String, $filter: IssueRelationFilter) {{
+  issueRelations(first: $first, after: $after, filter: $filter) {{
+    nodes {{ {RELATION_FIELDS} }}
+    {PAGE_INFO}
+  }}
+}}
+"""
+
+ISSUE_RELATION_CREATE = f"""
+mutation IssueRelationCreate($input: IssueRelationCreateInput!) {{
+  issueRelationCreate(input: $input) {{
+    success
+    issueRelation {{ {RELATION_FIELDS} }}
+  }}
+}}
+"""
+
+ISSUE_RELATION_DELETE = """
+mutation IssueRelationDelete($id: String!) {
+  issueRelationDelete(id: $id) { success }
+}
+"""
+
+
+# --- Agent sessions ---------------------------------------------------------
+
+AGENT_SESSION_FIELDS = """
+  id status type startedAt endedAt
+  issue { id identifier title }
+  comment { id body url }
+  creator { id name displayName }
+  appUser { id name displayName }
+  createdAt updatedAt
+"""
+
+LIST_AGENT_SESSIONS = f"""
+query ListAgentSessions($first: Int, $after: String, $filter: AgentSessionFilter) {{
+  agentSessions(first: $first, after: $after, filter: $filter) {{
+    nodes {{ {AGENT_SESSION_FIELDS} }}
+    {PAGE_INFO}
+  }}
+}}
+"""
+
+GET_AGENT_SESSION = f"""
+query GetAgentSession($id: String!) {{
+  agentSession(id: $id) {{ {AGENT_SESSION_FIELDS} }}
+}}
+"""
+
+AGENT_SESSION_CREATE_ON_ISSUE = f"""
+mutation AgentSessionCreateOnIssue($input: AgentSessionCreateOnIssueInput!) {{
+  agentSessionCreateOnIssue(input: $input) {{
+    success
+    agentSession {{ {AGENT_SESSION_FIELDS} }}
+  }}
+}}
+"""
+
+AGENT_SESSION_CREATE_ON_COMMENT = f"""
+mutation AgentSessionCreateOnComment($input: AgentSessionCreateOnCommentInput!) {{
+  agentSessionCreateOnComment(input: $input) {{
+    success
+    agentSession {{ {AGENT_SESSION_FIELDS} }}
+  }}
+}}
+"""
+
+
+# --- Bulk operations --------------------------------------------------------
+
+ISSUE_BATCH_UPDATE = f"""
+mutation IssueBatchUpdate($ids: [UUID!]!, $input: IssueUpdateInput!) {{
+  issueBatchUpdate(ids: $ids, input: $input) {{
+    success
+    issues {{ {ISSUE_FIELDS} }}
+  }}
+}}
+"""

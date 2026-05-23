@@ -56,6 +56,9 @@ def register(mcp) -> None:
                             "name": org.get("name"),
                             "url_key": org.get("urlKey"),
                         },
+                        # Surface the rate-limit budget left for THIS workspace's
+                        # PAT — populated from response headers on the viewer call.
+                        "rate_limit": dict(client.last_rate_limit) or None,
                     }
                 except LinearError as e:
                     results[alias] = {"ok": False, "error": str(e), "status": e.status}

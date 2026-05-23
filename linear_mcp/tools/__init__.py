@@ -16,6 +16,12 @@ from . import (
     documents,
     status_updates,
     search,
+    # v0.2 additions
+    webhooks,
+    notifications,
+    attachments,
+    relations,
+    agent_sessions,
 )
 
 
@@ -34,3 +40,9 @@ def register_all(mcp) -> None:
     documents.register(mcp)
     status_updates.register(mcp)
     search.register(mcp)
+    # v0.2
+    webhooks.register(mcp)
+    notifications.register(mcp)
+    attachments.register(mcp)
+    relations.register(mcp)
+    agent_sessions.register(mcp)

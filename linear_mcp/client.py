@@ -15,7 +15,7 @@ import json
 import logging
 import os
 from functools import lru_cache
-from typing import Any
+from typing import Any  # noqa: F401  (used in LinearClient.last_rate_limit annotation)
 
 import httpx
 
@@ -51,16 +51,47 @@ def _http_client(token: str) -> httpx.Client:
 
 
 class LinearClient:
-    """Per-workspace GraphQL client. Construct from a Workspace."""
+    """Per-workspace GraphQL client. Construct from a Workspace.
+
+    After every request, the latest rate-limit headers are surfaced as
+    `self.last_rate_limit` so healthcheck (and any caller that cares) can
+    report remaining budget without re-querying. Linear sets
+    `X-RateLimit-{Requests-Limit, Requests-Remaining, Requests-Reset}`
+    (per-token), plus `X-Complexity-Remaining` (per-token GraphQL cost
+    budget). Reset values are Unix timestamps.
+    """
 
     def __init__(self, workspace: Workspace) -> None:
         self.workspace = workspace
         self.http = _http_client(workspace.token)
+        # Per-client mutable state; OK for stdio (single process, single in-flight call).
+        self.last_rate_limit: dict[str, Any] = {}
+
+    def _capture_rate_limit(self, headers) -> None:
+        rl: dict[str, Any] = {}
+        for src_key, out_key in (
+            ("X-RateLimit-Requests-Limit", "requests_limit"),
+            ("X-RateLimit-Requests-Remaining", "requests_remaining"),
+            ("X-RateLimit-Requests-Reset", "requests_reset"),
+            ("X-Complexity-Limit", "complexity_limit"),
+            ("X-Complexity-Remaining", "complexity_remaining"),
+            ("X-Complexity-Reset", "complexity_reset"),
+        ):
+            v = headers.get(src_key)
+            if v is None:
+                continue
+            try:
+                rl[out_key] = int(v)
+            except (ValueError, TypeError):
+                rl[out_key] = v
+        if rl:
+            self.last_rate_limit = rl
 
     def request(self, query: str, variables: dict | None = None) -> dict:
         """POST a GraphQL operation and return the `data` field.
 
         Raises LinearError on HTTP failure or `errors[]` in the response.
+        Side effect: updates `self.last_rate_limit` from response headers.
         """
         body = {"query": query}
         if variables is not None:
@@ -69,6 +100,8 @@ class LinearClient:
             resp = self.http.post("", content=json.dumps(body))
         except httpx.RequestError as e:
             raise LinearError(f"network error: {e}") from e
+        # Capture rate-limit headers from every response, including errors.
+        self._capture_rate_limit(resp.headers)
         if resp.status_code == 401:
             raise LinearError(
                 f"unauthorized: PAT for workspace '{self.workspace.alias}' was rejected. "

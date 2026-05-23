@@ -14,7 +14,7 @@ import sys
 
 from fastmcp import FastMCP
 
-from . import __version__
+from . import __version__, prompts
 from .tools import register_all
 from .workspaces import REGISTRY
 
@@ -28,6 +28,7 @@ log = logging.getLogger("linear-mcp")
 mcp = FastMCP("linear-mcp")
 
 register_all(mcp)
+prompts.register(mcp)
 
 
 def _startup_log() -> None:
