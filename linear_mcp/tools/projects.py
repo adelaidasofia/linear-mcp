@@ -5,7 +5,14 @@ from __future__ import annotations
 from typing import Any
 
 from .. import queries
-from ._common import client_for, clean, run_tool, page_summary
+from ._common import (
+    client_for,
+    clean,
+    run_tool,
+    page_summary,
+    assert_source_first_line,
+    assert_no_duplicate_source,
+)
 
 
 def register(mcp) -> None:
@@ -97,6 +104,20 @@ def register(mcp) -> None:
             )
         if not name or not team_ids:
             raise ValueError("save_project: `name` and `team_ids` required to create a new project")
+        # v0.3 substrate-layer enforcement: same `[source:]` + idempotency
+        # gates as save_issue, applied to the project `content` field
+        # (Linear's long-form rich text on a project).
+        canonical_key = assert_source_first_line(
+            content, tool="save_project", field="content",
+        )
+        if canonical_key:
+            assert_no_duplicate_source(
+                client, canonical_key,
+                query=queries.SEARCH_PROJECTS,
+                response_key="searchProjects",
+                tool="save_project",
+                save_param="id",
+            )
         return run_tool(
             "save_project (create)", params,
             lambda: client.request(queries.PROJECT_CREATE, {"input": input_payload}),

@@ -67,7 +67,24 @@ claude mcp add -s user linear-mcp linear-mcp
 
 4. Restart Claude Code. `healthcheck` should return `ok: true` per workspace.
 
-## Tool surface (v0.2 — 57 tools + 3 prompts)
+## Substrate-layer enforcement (v0.3)
+
+Three server-side checks that protect issue quality without depending on any markdown rule file or client-side memory. Apply only to WRITE paths; reads stay unconstrained.
+
+| Layer | What it does | Bypass env var |
+|---|---|---|
+| `[source:]` first-line check | `save_issue` / `save_project` reject CREATE calls whose `description` (or project `content`) does not start with `[source: <canonical-key>]`. UPDATE calls (`id` passed) skip the check so legacy backfills remain unblocked. | `LINEAR_MCP_SKIP_SOURCE_CHECK=1` |
+| Idempotency check | Before any CREATE, the server runs `searchIssues` / `searchProjects` for `[source: <key>]` and refuses to create a duplicate. The error names the existing identifier + UUID so the caller can update in place. | `LINEAR_MCP_SKIP_IDEMPOTENCY=1` |
+| `auth_phrase` on `bulk_save_issues` | `bulk_save_issues` now requires `auth_phrase` ∈ {`"go"`, `"yes do it"`, `"confirmed"`, `"execute"`, `"go cancel"`, `"go update"`} (case-insensitive). Mass-modification surface stays explicit. | (no bypass — surface the phrase to the operator) |
+
+Canonical-key examples:
+
+- `[source: 🍄 Mycelium AI/📝 Meeting Notes/2026-05-22 - sync.md]`
+- `[source: ⚙️ Meta/Decisions/2026-05-23-merger-public-comms.md]`
+- `[source: linear-kickoff:sweep-myc-p1]`
+- `[source: ~/.claude/linear-mcp/BUILD_PROMPT_V03.md]`
+
+## Tool surface (v0.3 — 57 tools + 3 prompts)
 
 Every tool takes an optional `workspace` parameter (the alias from `LINEAR_WORKSPACES`). Omit it to use `LINEAR_PRIMARY_WORKSPACE`.
 
@@ -84,9 +101,9 @@ Every tool takes an optional `workspace` parameter (the alias from `LINEAR_WORKS
 |---|---|
 | `list_teams` / `get_team` | Teams (with inline workflow states) |
 | `list_users` / `get_user` | Users (`me` resolves to PAT owner) |
-| `list_projects` / `get_project` / `save_project` | Projects |
+| `list_projects` / `get_project` / `save_project` | Projects (v0.3: `save_project` enforces `[source:]` on `content` + idempotency on CREATE) |
 | `list_initiatives` / `get_initiative` / `save_initiative` | Initiatives |
-| `list_issues` / `get_issue` / `save_issue` / `bulk_save_issues` | Issues (id or `ONDE-123`; bulk uses `issueBatchUpdate`) |
+| `list_issues` / `get_issue` / `save_issue` / `bulk_save_issues` | Issues (id or `ONDE-123`; bulk uses `issueBatchUpdate`; v0.3: `save_issue` enforces `[source:]` + idempotency on CREATE; `bulk_save_issues` requires `auth_phrase`) |
 | `list_cycles` | Cycles |
 | `list_milestones` / `get_milestone` / `save_milestone` | Project milestones |
 | `list_issue_statuses` / `get_issue_status` | Workflow states |

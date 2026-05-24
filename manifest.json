@@ -2,7 +2,7 @@
   "manifest_version": "0.4",
   "name": "linear-mcp",
   "display_name": "Linear MCP (multi-workspace, PAT auth)",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Multi-workspace Linear MCP server with PAT auth — drop-in replacement for the official OAuth-only Linear connector.",
   "author": {
     "name": "adelaidasofia",

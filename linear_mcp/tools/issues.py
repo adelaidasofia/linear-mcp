@@ -10,7 +10,15 @@ from __future__ import annotations
 from typing import Any
 
 from .. import queries
-from ._common import client_for, clean, run_tool, page_summary
+from ._common import (
+    client_for,
+    clean,
+    run_tool,
+    page_summary,
+    assert_source_first_line,
+    assert_no_duplicate_source,
+    assert_bulk_auth_phrase,
+)
 
 
 def _build_issue_filter(assignee_id: str | None, team_id: str | None,
@@ -168,6 +176,20 @@ def register(mcp) -> None:
             )
         if not title or not team_id:
             raise ValueError("save_issue: `title` and `team_id` required to create")
+        # v0.3 substrate-layer enforcement: [source:] first-line + idempotency.
+        # Both skip on UPDATE (id passed above); both have env bypasses inside
+        # the helpers themselves.
+        canonical_key = assert_source_first_line(
+            description, tool="save_issue", field="description",
+        )
+        if canonical_key:
+            assert_no_duplicate_source(
+                client, canonical_key,
+                query=queries.SEARCH_ISSUES,
+                response_key="searchIssues",
+                tool="save_issue",
+                save_param="id",
+            )
         return run_tool(
             "save_issue (create)", params,
             lambda: client.request(queries.ISSUE_CREATE, {"input": input_payload}),
@@ -177,6 +199,7 @@ def register(mcp) -> None:
 
     @mcp.tool()
     def bulk_save_issues(ids: list[str],
+                         auth_phrase: str,
                          workspace: str | None = None,
                          state_id: str | None = None,
                          assignee_id: str | None = None,
@@ -194,9 +217,17 @@ def register(mcp) -> None:
         the work server-side — way faster than N separate `save_issue`
         calls for bulk ops like "mark these 50 as Done" or "reassign
         these to me."
+
+        `auth_phrase` (REQUIRED, v0.3) must be one of: "go", "yes do it",
+        "confirmed", "execute", "go cancel", "go update". Without this
+        explicit confirmation a single hallucinated arg could
+        mass-modify pre-existing shared workspace data — surface the
+        requirement to the operator and capture their explicit phrase
+        before calling this tool.
         """
         if not ids:
             raise ValueError("bulk_save_issues: ids must be non-empty")
+        assert_bulk_auth_phrase(auth_phrase)
         client = client_for(workspace)
         resolved_assignee = assignee_id
         if assignee_id and assignee_id.lower() == "me":

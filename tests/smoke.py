@@ -218,6 +218,221 @@ def test_queries_compile() -> None:
                         f"queries.{name}: no unresolved f-string braces")
 
 
+# --- v0.3 substrate-layer enforcement tests ---------------------------------
+
+
+def _expect_linear_error(fn, label: str):
+    """Call fn() and assert it raises LinearError; return the exception."""
+    from linear_mcp.client import LinearError
+    try:
+        fn()
+    except LinearError as e:
+        return e
+    raise AssertionError(f"{label}: expected LinearError, no exception raised")
+
+
+def test_source_key_extraction() -> None:
+    """extract_source_key parses the `[source: ...]` first-line format."""
+    from linear_mcp.tools._common import extract_source_key
+    assert_eq(
+        extract_source_key("[source: foo/bar.md]\n\nbody"),
+        "foo/bar.md",
+        "extract: basic",
+    )
+    assert_eq(
+        extract_source_key("  [source: linear-kickoff:sweep-myc-p1]"),
+        "linear-kickoff:sweep-myc-p1",
+        "extract: leading whitespace + colon-suffix key",
+    )
+    assert_eq(
+        extract_source_key("[source: \U0001f344 Mycelium AI/notes.md]\n"),
+        "\U0001f344 Mycelium AI/notes.md",
+        "extract: emoji + nested path",
+    )
+    assert_eq(extract_source_key(None), None, "extract: None -> None")
+    assert_eq(extract_source_key(""), None, "extract: empty -> None")
+    assert_eq(
+        extract_source_key("no source line here"),
+        None,
+        "extract: missing -> None",
+    )
+
+
+def test_assert_source_first_line_rejects_missing() -> None:
+    """Layer 1: CREATE with no `[source:]` raises LinearError."""
+    from linear_mcp.tools._common import assert_source_first_line
+    os.environ.pop("LINEAR_MCP_SKIP_SOURCE_CHECK", None)
+    for bad in (None, "", "just a body with no source line"):
+        e = _expect_linear_error(
+            lambda b=bad: assert_source_first_line(
+                b, tool="save_issue", field="description",
+            ),
+            f"source-check rejects {bad!r}",
+        )
+        assert_true("[source:" in str(e), "error mentions [source:")
+        assert_true(
+            "LINEAR_MCP_SKIP_SOURCE_CHECK" in str(e),
+            "error mentions bypass env var",
+        )
+
+
+def test_assert_source_first_line_accepts_valid() -> None:
+    """Layer 1: well-formed `[source:]` first line passes and returns the key."""
+    from linear_mcp.tools._common import assert_source_first_line
+    os.environ.pop("LINEAR_MCP_SKIP_SOURCE_CHECK", None)
+    key = assert_source_first_line(
+        "[source: ~/.claude/linear-mcp/BUILD_PROMPT_V03.md]\n\nbody",
+        tool="save_issue", field="description",
+    )
+    assert_eq(key, "~/.claude/linear-mcp/BUILD_PROMPT_V03.md", "valid: extracts key")
+
+
+def test_assert_source_first_line_bypass_env() -> None:
+    """Layer 1: LINEAR_MCP_SKIP_SOURCE_CHECK=1 bypasses the check."""
+    from linear_mcp.tools._common import assert_source_first_line
+    os.environ["LINEAR_MCP_SKIP_SOURCE_CHECK"] = "1"
+    try:
+        result = assert_source_first_line(
+            None, tool="save_issue", field="description",
+        )
+        assert_eq(result, None, "bypass: returns None instead of raising")
+    finally:
+        os.environ.pop("LINEAR_MCP_SKIP_SOURCE_CHECK", None)
+
+
+class _FakeClient:
+    """Minimal LinearClient stand-in for idempotency tests."""
+
+    def __init__(self, response: dict):
+        self._response = response
+        self.calls: list = []
+
+    def request(self, query: str, variables: dict) -> dict:
+        self.calls.append((query, variables))
+        return self._response
+
+
+def test_assert_no_duplicate_source_passes_when_empty() -> None:
+    """Layer 2: empty search result -> check passes silently."""
+    from linear_mcp.tools._common import assert_no_duplicate_source
+    from linear_mcp import queries
+    os.environ.pop("LINEAR_MCP_SKIP_IDEMPOTENCY", None)
+    fake = _FakeClient({"searchIssues": {"nodes": []}})
+    assert_no_duplicate_source(
+        fake, "some/key.md",
+        query=queries.SEARCH_ISSUES,
+        response_key="searchIssues",
+        tool="save_issue",
+        save_param="id",
+    )
+    assert_eq(len(fake.calls), 1, "idempotency: searches once")
+    assert_eq(
+        fake.calls[0][1]["term"],
+        "[source: some/key.md]",
+        "idempotency: search term wraps the key in [source: ...]",
+    )
+
+
+def test_assert_no_duplicate_source_raises_when_found() -> None:
+    """Layer 2: existing match -> LinearError with the existing identifier."""
+    from linear_mcp.tools._common import assert_no_duplicate_source
+    from linear_mcp import queries
+    os.environ.pop("LINEAR_MCP_SKIP_IDEMPOTENCY", None)
+    fake = _FakeClient({
+        "searchIssues": {"nodes": [{
+            "id": "abc-uuid", "identifier": "MYC-42", "title": "Existing one",
+        }]},
+    })
+    e = _expect_linear_error(
+        lambda: assert_no_duplicate_source(
+            fake, "some/key.md",
+            query=queries.SEARCH_ISSUES,
+            response_key="searchIssues",
+            tool="save_issue",
+            save_param="id",
+        ),
+        "idempotency: existing match",
+    )
+    msg = str(e)
+    assert_true("MYC-42" in msg, "error names the existing identifier")
+    assert_true("abc-uuid" in msg, "error names the UUID for update-in-place")
+    assert_true(
+        "LINEAR_MCP_SKIP_IDEMPOTENCY" in msg,
+        "error mentions bypass env var",
+    )
+
+
+def test_assert_no_duplicate_source_bypass_env() -> None:
+    """Layer 2: LINEAR_MCP_SKIP_IDEMPOTENCY=1 short-circuits before searching."""
+    from linear_mcp.tools._common import assert_no_duplicate_source
+    from linear_mcp import queries
+    os.environ["LINEAR_MCP_SKIP_IDEMPOTENCY"] = "1"
+    try:
+        fake = _FakeClient({
+            "searchIssues": {"nodes": [{
+                "id": "x", "identifier": "MYC-1", "title": "match",
+            }]},
+        })
+        # Should not raise even though a match exists.
+        assert_no_duplicate_source(
+            fake, "some/key.md",
+            query=queries.SEARCH_ISSUES,
+            response_key="searchIssues",
+            tool="save_issue",
+            save_param="id",
+        )
+        assert_eq(len(fake.calls), 0, "bypass: never calls the API")
+    finally:
+        os.environ.pop("LINEAR_MCP_SKIP_IDEMPOTENCY", None)
+
+
+def test_bulk_auth_phrase_rejects_missing() -> None:
+    """Layer 3: bulk_save_issues without auth_phrase raises."""
+    from linear_mcp.tools._common import assert_bulk_auth_phrase
+    for bad in (None, "", "   ", "maybe", "ok", "sure", "lgtm"):
+        e = _expect_linear_error(
+            lambda b=bad: assert_bulk_auth_phrase(b),
+            f"auth_phrase rejects {bad!r}",
+        )
+        assert_true("auth_phrase" in str(e), "error mentions auth_phrase")
+
+
+def test_bulk_auth_phrase_accepts_valid() -> None:
+    """Layer 3: each canonical phrase passes (case-insensitive, trimmed)."""
+    from linear_mcp.tools._common import assert_bulk_auth_phrase, BULK_AUTH_PHRASES
+    for phrase in BULK_AUTH_PHRASES:
+        for variant in (phrase, phrase.upper(), f"  {phrase}  "):
+            assert_bulk_auth_phrase(variant)  # must not raise
+
+
+def test_bulk_save_issues_signature_has_auth_phrase() -> None:
+    """Layer 3: bulk_save_issues tool surface exposes auth_phrase as required.
+
+    FastMCP exposes the JSON-schema-style param dict under `tool.parameters`.
+    A param is required when its `properties[<name>]` has no `default` key
+    (kw-only with no default in the Python signature).
+    """
+    import asyncio
+    from fastmcp import FastMCP
+    from linear_mcp.tools import register_all
+    mcp = FastMCP("linear-mcp-bulk-sig")
+    register_all(mcp)
+    tools = asyncio.run(mcp.list_tools())
+    bulk = next((t for t in tools if t.name == "bulk_save_issues"), None)
+    assert_true(bulk is not None, "bulk_save_issues registered")
+    schema = getattr(bulk, "parameters", None) or {}
+    props = schema.get("properties") or {}
+    assert_true(
+        "auth_phrase" in props,
+        f"auth_phrase param exposed in schema: {sorted(props)}",
+    )
+    auth_prop = props["auth_phrase"]
+    assert_true(
+        "default" not in auth_prop,
+        f"auth_phrase has no default (so it's required): {auth_prop}",
+    )
+
+
 TESTS = [
     test_package_imports,
     test_module_imports,
@@ -235,6 +450,17 @@ TESTS = [
     test_draft_lifecycle,
     test_clean_strips_none,
     test_queries_compile,
+    # v0.3 substrate-layer enforcement (Layers 1, 2, 3)
+    test_source_key_extraction,
+    test_assert_source_first_line_rejects_missing,
+    test_assert_source_first_line_accepts_valid,
+    test_assert_source_first_line_bypass_env,
+    test_assert_no_duplicate_source_passes_when_empty,
+    test_assert_no_duplicate_source_raises_when_found,
+    test_assert_no_duplicate_source_bypass_env,
+    test_bulk_auth_phrase_rejects_missing,
+    test_bulk_auth_phrase_accepts_valid,
+    test_bulk_save_issues_signature_has_auth_phrase,
 ]
 
 

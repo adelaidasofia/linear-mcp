@@ -45,7 +45,7 @@ def _http_client(token: str) -> httpx.Client:
         headers={
             "Authorization": token,
             "Content-Type": "application/json",
-            "User-Agent": "linear-mcp/0.1.0 (https://github.com/adelaidasofia/linear-mcp)",
+            "User-Agent": "linear-mcp/0.3.0 (https://github.com/adelaidasofia/linear-mcp)",
         },
     )
 

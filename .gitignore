@@ -13,3 +13,4 @@ drafts.log
 .DS_Store
 .idea/
 .vscode/
+BUILD_PROMPT_*.md
