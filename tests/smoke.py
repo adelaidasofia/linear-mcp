@@ -334,13 +334,14 @@ def test_assert_no_duplicate_source_passes_when_empty() -> None:
 
 
 def test_assert_no_duplicate_source_raises_when_found() -> None:
-    """Layer 2: existing match -> LinearError with the existing identifier."""
+    """Layer 2: existing match (verified by description [source:] line) -> LinearError."""
     from linear_mcp.tools._common import assert_no_duplicate_source
     from linear_mcp import queries
     os.environ.pop("LINEAR_MCP_SKIP_IDEMPOTENCY", None)
     fake = _FakeClient({
         "searchIssues": {"nodes": [{
-            "id": "abc-uuid", "identifier": "MYC-42", "title": "Existing one",
+            "id": "abc-uuid", "identifier": "ABC-42", "title": "Existing one",
+            "description": "[source: some/key.md]\nrest of body",
         }]},
     })
     e = _expect_linear_error(
@@ -354,12 +355,100 @@ def test_assert_no_duplicate_source_raises_when_found() -> None:
         "idempotency: existing match",
     )
     msg = str(e)
-    assert_true("MYC-42" in msg, "error names the existing identifier")
+    assert_true("ABC-42" in msg, "error names the existing identifier")
     assert_true("abc-uuid" in msg, "error names the UUID for update-in-place")
     assert_true(
         "LINEAR_MCP_SKIP_IDEMPOTENCY" in msg,
         "error mentions bypass env var",
     )
+
+
+def test_assert_no_duplicate_source_ignores_full_text_false_positives() -> None:
+    """Layer 2 regression (v0.3.1): Linear's searchIssues is full-text + relevance
+    ranked, NOT exact match. Brackets and special chars in `[source: <key>]` get
+    tokenized away, so the search returns whatever is most relevant by token
+    overlap. The check MUST filter results client-side using the actual
+    [source:] first line of each node's description; otherwise unique opaque
+    keys like `7f2a9c1d-rot-key-canonical` get matched against unrelated
+    recent issues whose descriptions happen to share a common token like
+    `source` or `key`.
+
+    Reproduces a real-world bug: 15 issue creates rejected as duplicates of
+    unrelated issues that carried genuinely different source keys.
+    """
+    from linear_mcp.tools._common import assert_no_duplicate_source
+    from linear_mcp import queries
+    os.environ.pop("LINEAR_MCP_SKIP_IDEMPOTENCY", None)
+    # Linear returns unrelated issues as full-text "matches" because the
+    # tokens overlap loosely. None of these carry the canonical key in
+    # their [source:] first line — the check must let the create through.
+    fake = _FakeClient({
+        "searchIssues": {"nodes": [
+            {
+                "id": "u1", "identifier": "ABC-53", "title": "auth feature",
+                "description": "[source: vault-todo:frontend.md#L42]\n...",
+            },
+            {
+                "id": "u2", "identifier": "ABC-16", "title": "trip planning playbook",
+                "description": "[source: path/to/meeting-2026-05-19.md]\n...",
+            },
+            {
+                "id": "u3", "identifier": "ABC-10", "title": "outreach batch",
+                "description": "No source line at all, just legacy body text",
+            },
+        ]},
+    })
+    # Should NOT raise: none of the candidates actually carry the canonical key.
+    assert_no_duplicate_source(
+        fake, "7f2a9c1d-rot-key-canonical",
+        query=queries.SEARCH_ISSUES,
+        response_key="searchIssues",
+        tool="save_issue",
+        save_param="id",
+    )
+    assert_eq(
+        fake.calls[0][1]["first"], 25,
+        "idempotency: fetches a window of candidates (not first=1) so client-side filter has room",
+    )
+
+
+def test_assert_no_duplicate_source_finds_real_dup_among_false_positives() -> None:
+    """Layer 2 regression (v0.3.1): a true duplicate co-mingled with full-text
+    false positives must still be caught. The client-side filter has to scan
+    the whole window, not just rank-1."""
+    from linear_mcp.tools._common import assert_no_duplicate_source
+    from linear_mcp import queries
+    os.environ.pop("LINEAR_MCP_SKIP_IDEMPOTENCY", None)
+    fake = _FakeClient({
+        "searchIssues": {"nodes": [
+            {  # rank 1: false positive (no matching source key)
+                "id": "u1", "identifier": "ABC-53", "title": "unrelated",
+                "description": "[source: other/key.md]\n...",
+            },
+            {  # rank 2: false positive
+                "id": "u2", "identifier": "ABC-16", "title": "also unrelated",
+                "description": "no source line",
+            },
+            {  # rank 3: TRUE duplicate — must be caught
+                "id": "real-uuid", "identifier": "ABC-99",
+                "title": "the actual dup",
+                "description": "[source: 7f2a9c1d-rot-key-canonical]\nbody",
+            },
+        ]},
+    })
+    e = _expect_linear_error(
+        lambda: assert_no_duplicate_source(
+            fake, "7f2a9c1d-rot-key-canonical",
+            query=queries.SEARCH_ISSUES,
+            response_key="searchIssues",
+            tool="save_issue",
+            save_param="id",
+        ),
+        "idempotency: true dup at rank 3 is found",
+    )
+    msg = str(e)
+    assert_true("ABC-99" in msg, "error names the TRUE duplicate, not the rank-1 false positive")
+    assert_true("real-uuid" in msg, "error surfaces the TRUE duplicate's UUID")
 
 
 def test_assert_no_duplicate_source_bypass_env() -> None:
@@ -457,6 +546,8 @@ TESTS = [
     test_assert_source_first_line_bypass_env,
     test_assert_no_duplicate_source_passes_when_empty,
     test_assert_no_duplicate_source_raises_when_found,
+    test_assert_no_duplicate_source_ignores_full_text_false_positives,
+    test_assert_no_duplicate_source_finds_real_dup_among_false_positives,
     test_assert_no_duplicate_source_bypass_env,
     test_bulk_auth_phrase_rejects_missing,
     test_bulk_auth_phrase_accepts_valid,

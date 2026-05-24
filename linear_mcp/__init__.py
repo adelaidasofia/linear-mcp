@@ -1,3 +1,3 @@
 """linear-mcp — multi-workspace Linear MCP server with PAT auth."""
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"

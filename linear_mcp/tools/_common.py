@@ -181,12 +181,27 @@ def assert_no_duplicate_source(
     """
     if os.environ.get("LINEAR_MCP_SKIP_IDEMPOTENCY"):
         return
+    # Linear's searchIssues / searchProjects is full-text + relevance ranked,
+    # NOT exact match. Brackets and most punctuation in the term get tokenized
+    # away, so a search for "[source: 7f2a9c1d-rot-key-20260523]" returns
+    # whatever is most relevant by remaining token overlap (e.g. recent issues
+    # mentioning "source" / "key" / "rot") — even when no entity actually
+    # carries that canonical key. Fix: fetch a window of candidates ranked by
+    # relevance, then filter client-side by extracting the `[source:]` first
+    # line of each result's description (or content, for projects) and exact-
+    # matching against the canonical key. True duplicates surface at high
+    # rank; coincidental token matches drop out of the filter.
     term = f"[source: {canonical_key}]"
-    resp = client.request(query, {"term": term, "first": 1})
+    resp = client.request(query, {"term": term, "first": 25})
     nodes = (resp.get(response_key) or {}).get("nodes") or []
-    if not nodes:
+    match = None
+    for node in nodes:
+        body = node.get("description") or node.get("content") or ""
+        if extract_source_key(body) == canonical_key:
+            match = node
+            break
+    if match is None:
         return
-    match = nodes[0]
     label = match.get("identifier") or match.get("name") or match.get("id") or "?"
     title = match.get("title") or match.get("name") or ""
     raise LinearError(

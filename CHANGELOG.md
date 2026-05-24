@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.3.1] - 2026-05-24
+
+Bug fix: v0.3.0's idempotency check rejected unique source keys as duplicates of unrelated issues.
+
+### Fixed
+
+- **`assert_no_duplicate_source` false positives.** v0.3.0 passed `[source: <key>]` directly to Linear's `searchIssues` / `searchProjects` as the search term. Those endpoints are full-text + relevance-ranked, not exact match — brackets and most punctuation in the term get tokenized away, so a search for `[source: 7f2a9c1d-rot-key-20260523]` returned whatever was most relevant by remaining-token overlap (e.g. recent issues mentioning `source` or `key`) even when nothing actually carried that canonical key. Reproduced on 2026-05-23: 15 issue creates rejected as duplicates of unrelated issues. v0.3.1 fetches a window of candidates ranked by relevance, then filters client-side by extracting the `[source:]` first line of each result's `description` (or `content` for projects) and exact-matching against the canonical key. True duplicates still surface; coincidental token matches drop out.
+
+### Tests
+
+- 26 → 28 cases. Two new regression tests cover (a) full-text false positives are ignored even at search-rank 1, and (b) a true duplicate co-mingled with false positives at rank 3 is still caught.
+
 ## [0.3.0] - 2026-05-23
 
 Substrate-layer enforcement. v0.2.0 ships the surface; the issue-quality conventions (`[source:]` first-line, idempotency, explicit auth on bulk ops) lived only in advisory markdown rules and broke silently whenever a session forgot the rule files. v0.3 moves the floor into the MCP server — every future caller, regardless of which rules it loaded, gets the same hard guarantees.
