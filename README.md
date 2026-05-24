@@ -1,5 +1,7 @@
 # linear-mcp
 
+<!-- mcp-name: io.github.adelaidasofia/linear-mcp -->
+
 Multi-workspace Linear MCP server with Personal API Key auth. Drop-in replacement for the official OAuth-only Linear MCP at `mcp.linear.app/mcp`.
 
 **Why this exists.** The official Linear MCP is OAuth-only and single-workspace per instance. PAT auth plus persistent token storage plus multi-workspace routing kills three failure modes:

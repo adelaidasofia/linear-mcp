@@ -1,6 +1,6 @@
 [project]
 name = "adelaidasofia-linear-mcp"
-version = "0.3.1"
+version = "0.3.2"
 description = "Multi-workspace Linear MCP server with PAT auth — drop-in replacement for the official OAuth-only Linear connector."
 readme = "README.md"
 requires-python = ">=3.11"

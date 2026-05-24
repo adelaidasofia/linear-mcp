@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.3.2] - 2026-05-24
+
+Metadata-only patch: add `mcp-name: io.github.adelaidasofia/linear-mcp` ownership marker to README so the MCP registry can validate package ownership. No code change. Also wires the `publish-registry.yml` GitHub Actions workflow that auto-publishes to `registry.modelcontextprotocol.io` on every release via `mcp-publisher login github-oidc` — removes the last browser-only step from the release pipeline.
+
+### Added
+
+- `mcp-name: io.github.adelaidasofia/linear-mcp` HTML-comment marker at the top of README.md (required by registry ownership validation per `Failed to publish server` 400 response on v0.3.1 attempt).
+- `.github/workflows/publish-registry.yml` — fires on release.published + workflow_dispatch, installs mcp-publisher via Go, authenticates via GitHub Actions OIDC, validates server.json, publishes to registry.modelcontextprotocol.io.
+
+### Fixed
+
+- server.json description trimmed from 119 to 92 chars (registry hard cap 100).
+
 ## [0.3.1] - 2026-05-24
 
 Bug fix: v0.3.0's idempotency check rejected unique source keys as duplicates of unrelated issues.
