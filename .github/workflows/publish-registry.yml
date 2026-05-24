@@ -17,12 +17,15 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.22"
+          go-version: "stable"
+          check-latest: true
 
       - name: Install mcp-publisher
         run: |
           go install github.com/modelcontextprotocol/registry/cmd/publisher@latest
+          ln -sf "$HOME/go/bin/publisher" "$HOME/go/bin/mcp-publisher"
           echo "$HOME/go/bin" >> "$GITHUB_PATH"
+          "$HOME/go/bin/mcp-publisher" --help | head -5
 
       - name: Authenticate via GitHub Actions OIDC
         run: mcp-publisher login github-oidc
