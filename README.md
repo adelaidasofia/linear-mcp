@@ -165,7 +165,7 @@ Without `workspace`, the primary is used.
 
 Linear PATs use header `Authorization: <key>` (no `Bearer` prefix). Each PAT is scoped to one workspace and grants access only to data the owning user can see. There is no shared org token.
 
-Rate limit: ~1500 requests/hour per token. The server passes Linear's `Retry-After` header through on 429.
+Rate limit: 2500 requests/hour per token (verified against live API 2026-05-23). The server passes Linear's `Retry-After` header through on 429 and surfaces remaining budget via `healthcheck`.
 
 ## Safety
 
