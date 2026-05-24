@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.adelaidasofia/linear-mcp",
   "title": "Linear MCP (multi-workspace, PAT auth)",
-  "description": "Multi-workspace Linear MCP — PAT auth, 57 tools + 3 prompts, substrate-layer enforcement, drop-in for official MCP.",
+  "description": "Multi-workspace Linear MCP — PAT auth, 57 tools + 3 prompts, substrate enforcement, drop-in.",
   "version": "0.3.0",
   "repository": {
     "url": "https://github.com/adelaidasofia/linear-mcp",
