@@ -16,8 +16,11 @@ import logging
 import os
 from functools import lru_cache
 from typing import Any  # noqa: F401  (used in LinearClient.last_rate_limit annotation)
+from urllib.parse import urlparse
 
 import httpx
+
+from mycelium_security import UnsafeURL, assert_public_ip, sanitize_or_raise
 
 from .workspaces import Workspace
 
@@ -38,10 +41,26 @@ class LinearError(RuntimeError):
 
 @lru_cache(maxsize=8)
 def _http_client(token: str) -> httpx.Client:
-    """One pooled httpx client per token."""
+    """One pooled httpx client per token.
+
+    SSRF hardening (MYC-101): validate API_URL once at client construction
+    (since base_url is pinned for the client's lifetime), block 3xx
+    redirects so a malicious LINEAR_API_URL override can't redirect to
+    169.254.169.254.
+    """
+    try:
+        safe_url = sanitize_or_raise(API_URL)
+        host = urlparse(safe_url).hostname or ""
+        assert_public_ip(host)
+    except UnsafeURL as exc:
+        raise LinearError(
+            f"refused (SSRF): LINEAR_API_URL fails URL safety check: {exc}"
+        ) from exc
+
     return httpx.Client(
-        base_url=API_URL,
+        base_url=safe_url,
         timeout=TIMEOUT,
+        follow_redirects=False,
         headers={
             "Authorization": token,
             "Content-Type": "application/json",
