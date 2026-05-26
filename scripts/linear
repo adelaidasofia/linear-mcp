@@ -1,0 +1,4 @@
+#!/bin/bash
+# Wrapper for linear-cli.py with better shell integration
+cd ~/.claude/linear-mcp
+python3 scripts/linear-cli.py "$@"

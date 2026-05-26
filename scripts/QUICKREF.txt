@@ -1,0 +1,84 @@
+╔═══════════════════════════════════════════════════════════════════════════════╗
+║                    LINEAR CLI — QUICK REFERENCE                              ║
+║                                                                               ║
+║  Setup: export PATH="$PATH:$HOME/.claude/linear-mcp/scripts"                 ║
+║  Then:  linear <command> [options]                                           ║
+╚═══════════════════════════════════════════════════════════════════════════════╝
+
+FETCH ISSUE
+  linear get MYC-116                    # Get issue details
+  linear get MYC-116 --json             # Output as JSON
+  linear get MYC-116 -w onde            # From 'onde' workspace
+
+LIST ISSUES
+  linear list mycelium                  # All issues (default: 50)
+  linear list mycelium --state "Todo"   # Filter by state
+  linear list mycelium --assignee "me"  # Assigned to you
+  linear list mycelium --limit 100      # Get more results
+  linear list mycelium --json           # Output as JSON
+
+UPDATE ISSUE
+  linear update MYC-116 --state "Done"  # Change state
+  linear update MYC-116 --assignee "me" # Assign to yourself
+  linear update MYC-116 --priority 2    # Set priority (0-4  linear update MYC-116 --priority 2    # Set priority (0-4  linear update MYC-116ch mycelium "OpenTelemetry" --limit 20
+
+RATE LIMITS
+  linear list mycelium -v               # Show rate limit info
+  # Linear: 2500 requests/hour per PAT
+
+PIPING TO JQ
+  # Get all Todo identifiers
+  linear list mycelium --state "Todo" --json | jq -r '.[] | .identifier'
+  
+  # Get issue title + assignee
+  linear get MYC-116 --json | jq '{title, assignee: .assignee.name}'
+  
+  # Count issues
+  linear list mycelium --json | jq 'length'
+
+COMMON WORKFLOWS
+  # List my Todo items
+  linear list mycelium --state "Todo" --assignee "me"
+  
+  # Find issues I created
+  linear search mycelium "creator:me"
+  
+  # Get issue URL for sharing
+  linear get MYC-116 --json | jq -r '.url'
+
+WORKSPACES
+  # Set default in admin.env: LINEAR_PRIMARY_WORKSPACE=mycelium
+  linear list                           # Uses primary workspace
+  linear list -w onde                   # Switch workspace
+  linear list -w personal               # Another workspace
+
+HELP
+  linear --help                         # Show all commands
+  linear get --help                     # Command-specific help
+
+═══════════════════════════════════════════════════════════════════════════════
+
+SPEED COMPARISON (vs MCP tools):
+  Operation          MCP Tool    CLI Wrapper    Speedup
+  ─────────────────────────────────────────────────────
+  Fetch issue        25-30s      2-3s           10x
+  List (50 items)    20-25s      1-2s           15x
+  Update field       15-20s      1-2s           10x
+  Search (50)        20-25s      2-3s           10x
+
+═══════════════════════════════════════════════════════════════════════════════
+
+TROUBLESHOOTING:
+  "Command not found: linear"
+    → Add to ~/.zshrc: export PATH="$PATH:$HOME/.claude/linear-mcp/scripts"
+    → Reload: source ~/.zshrc
+  
+  "Workspace not found"
+    → Check: cat ~/.claude/linear-mcp/admin.env | grep LINEAR_WORKSPACES
+    → Add missing workspace + PAT to admin.env
+  
+  "Rate limit exceeded"
+    → Check remaining: linear list mycelium -v 2>&1 | grep "requests_remaining"
+    → Linear allows 2500/hour. Wait 1 hour or use different PAT.
+
+═══════════════════════════════════════════════════════════════════════════════
