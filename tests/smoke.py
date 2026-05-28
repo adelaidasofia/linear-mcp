@@ -42,6 +42,7 @@ def isolate_registry_from_admin_env():
     from linear_mcp import workspaces as ws_mod
     original = ws_mod.ENV_FILE
     ws_mod.ENV_FILE = Path("/tmp/linear-mcp-smoke-nonexistent.env")
+    clear_linear_env()
     return ws_mod, original
 
 
@@ -216,6 +217,152 @@ def test_queries_compile() -> None:
             # Catch unresolved fragments
             assert_true("{{" not in val and "}}" not in val,
                         f"queries.{name}: no unresolved f-string braces")
+
+
+def test_issue_relations_query_uses_current_linear_schema() -> None:
+    """Regression: Linear removed IssueRelationFilter from issueRelations."""
+    from linear_mcp import queries
+    assert_true(
+        "IssueRelationFilter" not in queries.LIST_ISSUE_RELATIONS,
+        "relations: top-level list query must not reference removed filter type",
+    )
+    assert_true(
+        "filter:" not in queries.LIST_ISSUE_RELATIONS,
+        "relations: top-level issueRelations no longer accepts filter arg",
+    )
+    assert_true(
+        "inverseRelations" in queries.GET_ISSUE_RELATIONS,
+        "relations: issue-scoped query includes inverse relations",
+    )
+
+
+def test_issue_relation_pages_merge_to_legacy_shape() -> None:
+    """Issue-scoped relation reads keep returning issueRelations.nodes."""
+    from linear_mcp.tools.relations import _merge_issue_relation_pages
+
+    merged = _merge_issue_relation_pages({
+        "issue": {
+            "id": "target",
+            "identifier": "MYC-1",
+            "title": "Target",
+            "relations": {
+                "nodes": [{
+                    "id": "rel-out",
+                    "type": "blocks",
+                    "issue": {"id": "target"},
+                    "relatedIssue": {"id": "downstream"},
+                }],
+                "pageInfo": {"hasNextPage": False, "endCursor": "rel-out"},
+            },
+            "inverseRelations": {
+                "nodes": [{
+                    "id": "rel-in",
+                    "type": "blocks",
+                    "issue": {"id": "upstream"},
+                    "relatedIssue": {"id": "target"},
+                }],
+                "pageInfo": {"hasNextPage": True, "endCursor": "rel-in"},
+            },
+        }
+    })
+    nodes = merged["issueRelations"]["nodes"]
+    assert_eq(len(nodes), 2, "relations merge: two nodes")
+    directions = {node["id"]: node["direction"] for node in nodes}
+    assert_eq(directions["rel-out"], "outgoing", "outgoing relation marked")
+    assert_eq(directions["rel-in"], "incoming", "incoming relation marked")
+    assert_true(
+        merged["issueRelations"]["pageInfo"]["hasNextPage"],
+        "relations merge: propagates pagination",
+    )
+
+
+def test_linear_exec_helpers_infer_safe_defaults() -> None:
+    """linear-exec infers workspace, repo, and branch-safe slug."""
+    from linear_mcp import linear_exec
+
+    issue = {
+        "identifier": "MYC-150",
+        "title": "Team two-layer architecture",
+        "description": "Implement this in memory-runtime-pro.",
+        "branchName": None,
+        "labels": {"nodes": []},
+    }
+    assert_eq(
+        linear_exec.infer_workspace("MYC-150"),
+        "mycelium",
+        "linear-exec: MYC prefix maps to mycelium",
+    )
+    assert_eq(
+        linear_exec.infer_repo(issue),
+        "memory-runtime-pro",
+        "linear-exec: known repo inferred from issue text",
+    )
+    assert_eq(
+        linear_exec.worktree_slug(issue),
+        "myc-150-team-two-layer-architecture",
+        "linear-exec: slug includes identifier and title",
+    )
+
+
+def test_linear_exec_detects_incomplete_blockers() -> None:
+    """Only upstream `blocks` relations with live states block execution."""
+    from linear_mcp import linear_exec
+
+    target = {"id": "target", "identifier": "MYC-2"}
+    blockers = linear_exec.incomplete_blockers(target, [
+        {
+            "type": "blocks",
+            "issue": {
+                "id": "upstream",
+                "identifier": "MYC-1",
+                "title": "Prerequisite",
+                "state": {"type": "started", "name": "In Progress"},
+            },
+            "relatedIssue": {"id": "target"},
+        },
+        {
+            "type": "blocks",
+            "issue": {"id": "target"},
+            "relatedIssue": {"id": "downstream"},
+        },
+        {
+            "type": "blocks",
+            "issue": {
+                "id": "done",
+                "identifier": "MYC-0",
+                "state": {"type": "completed", "name": "Done"},
+            },
+            "relatedIssue": {"id": "target"},
+        },
+    ])
+    assert_eq(len(blockers), 1, "linear-exec: one live upstream blocker")
+    assert_eq(
+        blockers[0]["identifier"],
+        "MYC-1",
+        "linear-exec: reports the upstream blocker",
+    )
+
+
+def test_linear_exec_scope_tokens() -> None:
+    """Scope tokens capture repos, paths, and branch names."""
+    from linear_mcp import linear_exec
+
+    tokens = linear_exec.scope_tokens({
+        "identifier": "MYC-3",
+        "title": "Touch the registry",
+        "description": "Update linear_mcp/workspaces.py in linear-mcp.",
+        "branchName": "claude/linear-exec-speedups",
+        "labels": {"nodes": []},
+    })
+    assert_true("linear-mcp" in tokens, "linear-exec: repo token")
+    assert_true(
+        "linear_mcp/workspaces.py" in tokens,
+        "linear-exec: path token",
+    )
+    assert_true(
+        "claude/linear-exec-speedups" in tokens,
+        "linear-exec: branch token",
+    )
 
 
 # --- v0.3 substrate-layer enforcement tests ---------------------------------
@@ -539,6 +686,11 @@ TESTS = [
     test_draft_lifecycle,
     test_clean_strips_none,
     test_queries_compile,
+    test_issue_relations_query_uses_current_linear_schema,
+    test_issue_relation_pages_merge_to_legacy_shape,
+    test_linear_exec_helpers_infer_safe_defaults,
+    test_linear_exec_detects_incomplete_blockers,
+    test_linear_exec_scope_tokens,
     # v0.3 substrate-layer enforcement (Layers 1, 2, 3)
     test_source_key_extraction,
     test_assert_source_first_line_rejects_missing,
