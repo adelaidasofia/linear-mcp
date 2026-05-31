@@ -187,6 +187,21 @@ def test_audit_redacts_pat() -> None:
     assert_eq(r["first"], 5, "audit: first kept")
 
 
+def test_workspace_repr_never_leaks_token() -> None:
+    """A Workspace repr must NEVER contain the raw PAT.
+
+    Guards SECRET-LEAK-IN-REPR: a failing test or a debug log that prints a
+    Workspace (or a WorkspaceRegistry) used to expose live Linear PATs.
+    """
+    from linear_mcp.workspaces import Workspace, WorkspaceRegistry
+    secret = "lin_api_SUPERSECRETtokenvalue000"
+    w = Workspace(alias="onde", token=secret, label="Onde")
+    assert_true(secret not in repr(w), "Workspace repr must not contain the token")
+    assert_true("SUPERSECRET" not in repr(w), "Workspace repr must not contain token chars")
+    reg = WorkspaceRegistry(workspaces={"onde": w}, primary="onde")
+    assert_true(secret not in repr(reg), "WorkspaceRegistry repr must not contain the token")
+
+
 def test_draft_lifecycle() -> None:
     from linear_mcp.drafts import DraftStore
     store = DraftStore()
@@ -536,6 +551,7 @@ TESTS = [
     test_registry_multi,
     test_registry_rejects_bad_pat,
     test_audit_redacts_pat,
+    test_workspace_repr_never_leaks_token,
     test_draft_lifecycle,
     test_clean_strips_none,
     test_queries_compile,

@@ -56,7 +56,9 @@ def _load_env_file() -> None:
 @dataclass
 class Workspace:
     alias: str
-    token: str
+    # repr=False keeps the live PAT out of every repr/log/traceback — a failing
+    # registry test once printed real tokens. Use .redacted() for debugging.
+    token: str = field(repr=False)
     label: str | None = None
 
     def redacted(self) -> dict:

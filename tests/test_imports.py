@@ -2,6 +2,26 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _isolate_admin_env(monkeypatch):
+    """Point the workspace registry at a non-existent admin.env.
+
+    Without this, WorkspaceRegistry.from_env() reads the real
+    ~/.claude/linear-mcp/admin.env on a dev machine, so registry tests that
+    assert on empty/default state fail AND leak live PATs in the failure repr.
+    CI runners have no admin.env, so this only bites locally — isolate always.
+    """
+    monkeypatch.setattr(
+        "linear_mcp.workspaces.ENV_FILE",
+        Path("/tmp/linear-mcp-test-nonexistent.env"),
+        raising=False,
+    )
+
 
 def test_package_imports() -> None:
     import linear_mcp  # noqa: F401
