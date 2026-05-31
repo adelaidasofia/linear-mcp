@@ -105,10 +105,13 @@ def seconds_until_reset(headers, now_s: float) -> float | None:
 
 # Retry tunables (env-overridable). Defaults chosen for the multi-session
 # workload: short waits because Linear's leaky bucket refills continuously, a
-# hard per-call cap so a single tool call never hangs, jitter so N concurrent
-# sessions don't retry in lockstep.
-RATE_LIMIT_MAX_RETRIES = int(os.environ.get("LINEAR_RATE_LIMIT_MAX_RETRIES", "5"))
-RATE_LIMIT_MAX_WAIT_S = float(os.environ.get("LINEAR_RATE_LIMIT_MAX_WAIT_S", "60"))
+# hard per-wait cap so a single tool call never hangs for minutes (worst case
+# ~= MAX_RETRIES * MAX_WAIT_S under sustained exhaustion, then a clear error so
+# the caller can retry/queue), jitter so N concurrent sessions don't retry in
+# lockstep. Re-reading the reset header each retry means partial waits still
+# converge as the bucket refills.
+RATE_LIMIT_MAX_RETRIES = int(os.environ.get("LINEAR_RATE_LIMIT_MAX_RETRIES", "4"))
+RATE_LIMIT_MAX_WAIT_S = float(os.environ.get("LINEAR_RATE_LIMIT_MAX_WAIT_S", "15"))
 RATE_LIMIT_BASE_WAIT_S = float(os.environ.get("LINEAR_RATE_LIMIT_BASE_WAIT_S", "1"))
 RATE_LIMIT_JITTER_S = float(os.environ.get("LINEAR_RATE_LIMIT_JITTER_S", "0.5"))
 

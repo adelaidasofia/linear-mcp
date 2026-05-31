@@ -318,10 +318,21 @@ Check remaining budget:
 linear list mycelium -v 2>&1 | grep "Rate limit"
 ```
 
-Linear allows 2500 requests/hour per PAT. If you hit the limit:
-- Wait 1 hour for reset
-- Or use a different PAT (add to admin.env)
-- Or batch operations with `bulk_save_issues` (counts as 1 request per 50 items)
+Linear allows up to 5,000 requests/hour AND 3,000,000 complexity points/hour
+**per authenticated user** — the quota is *shared across all of that user's
+PATs* (Linear's docs: "all requests by the same user share the same quota even
+when using different API keys"). Some plans are capped lower (e.g. 2,500 req/hr
+— read the `X-RateLimit-Requests-Limit` header to see your own). Rate-limit errors
+come back as **HTTP 400** with `errors[].extensions.code == "RATELIMITED"` and
+no `Retry-After` — only `X-RateLimit-*-Reset` epoch-ms headers. The leaky-bucket
+limiter refills continuously, so most bursts clear in seconds.
+
+If you hit the limit:
+- The MCP client now **auto-retries** on the reset header with jittered backoff
+  (see `linear_mcp/client.py`), so transient bursts self-heal — usually no action.
+- Batch multi-issue writes with `bulk_save_issues` (1 request per 50 items).
+- Adding a different PAT does **NOT** help — same user = same shared quota.
+- Source-of-truth: https://linear.app/developers/rate-limiting
 
 ### "Issue not found"
 
