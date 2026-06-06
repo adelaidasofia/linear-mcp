@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+security_src="${HOME}/dev/mycelium-security/src"
+
+if [[ -d "$security_src" ]]; then
+  export PYTHONPATH="${repo_root}:${security_src}${PYTHONPATH:+:${PYTHONPATH}}"
+else
+  export PYTHONPATH="${repo_root}${PYTHONPATH:+:${PYTHONPATH}}"
+fi
+exec python3 -m linear_mcp.linear_exec "$@"

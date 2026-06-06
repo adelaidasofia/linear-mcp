@@ -86,6 +86,36 @@ Canonical-key examples:
 - `[source: linear-kickoff:sweep-myc-p1]`
 - `[source: ~/.claude/linear-mcp/BUILD_PROMPT_V03.md]`
 
+## Fast issue execution
+
+`linear-exec` is the short path for starting real work from a Linear issue.
+It resolves the issue, checks blocking relations, scans same-project siblings
+for obvious scope overlap, infers the repo when possible, and can create the
+standard `claude-dev-worktree` branch.
+
+Dry-run a specific issue:
+
+```bash
+linear-exec execute MYC-150 --workspace mycelium
+```
+
+Start the work after reviewing the preflight:
+
+```bash
+linear-exec execute MYC-150 --workspace mycelium --repo memory-runtime-pro --go
+```
+
+Find the next unblocked P1 issue in a workspace:
+
+```bash
+linear-exec sweep mycelium p1
+linear-exec sweep mycelium p1 --go --repo memory-runtime-pro
+```
+
+The command refuses to proceed when an upstream `blocks` relation is still
+incomplete unless `--force` is passed. `--no-state-update` and `--no-worktree`
+let agents use only the parts of the preflight they need.
+
 ## Tool surface (v0.3 — 57 tools + 3 prompts)
 
 Every tool takes an optional `workspace` parameter (the alias from `LINEAR_WORKSPACES`). Omit it to use `LINEAR_PRIMARY_WORKSPACE`.

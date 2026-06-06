@@ -20,6 +20,25 @@ This guide provides **3 layers of optimization**:
 - **Layer 2: Workspace shortcuts** — Pre-configured aliases for quick switching
 - **Layer 3: Agent session templates** — Copy-paste-ready code for Claude/other agents
 
+## Current Fast Path For Agent Work
+
+Use `linear-exec` when the goal is "start work on the next Linear issue."
+It bundles the steps agents otherwise repeat by hand:
+
+```bash
+linear-exec execute MYC-150 --workspace mycelium
+linear-exec execute MYC-150 --workspace mycelium --repo memory-runtime-pro --go
+
+linear-exec sweep mycelium p1
+linear-exec sweep mycelium p1 --go --repo memory-runtime-pro
+```
+
+The dry run resolves the issue, checks incomplete upstream blockers, runs a
+same-project scope-overlap scan, infers the likely repo, and prints the exact
+`--go` command. With `--go`, it moves the issue into the started workflow state
+and creates a `claude-dev-worktree` branch. Use `--no-state-update` or
+`--no-worktree` to run only part of the workflow.
+
 ---
 
 ## Layer 1: CLI Wrapper (Fastest Path)
