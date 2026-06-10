@@ -26,13 +26,5 @@ jobs:
           python -m pip install -e .
           python -m pip install pytest
 
-      - name: Run pytest suite
-        run: python -m pytest tests/ -v
-
-      - name: Run bare smoke runner (no pytest dep)
-        run: python tests/smoke.py
-
-      - name: Verify server module imports cleanly
-        env:
-          LINEAR_PAT: "lin_api_smoke"
-        run: python -c "import linear_mcp.server"
+      - name: CI gate (canonical — mirrors local ci-test `make ci`)
+        run: make ci
