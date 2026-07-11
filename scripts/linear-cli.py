@@ -4,10 +4,11 @@ linear-cli.py — Fast Linear issue operations from the CLI.
 
 Usage:
   python3 linear-cli.py get MYC-116                    # Fetch issue details
-  python3 linear-cli.py list mycelium --state "Todo"   # List issues by state
+  python3 linear-cli.py -w mycelium list --state "Todo" # List issues by state
   python3 linear-cli.py update MYC-116 --state "Done"  # Update issue state
-  python3 linear-cli.py search mycelium "keyword"      # Full-text search
-  python3 linear-cli.py create mycelium --title "..." --team "..."  # Create issue
+  python3 linear-cli.py -w mycelium search "keyword"   # Full-text search
+  python3 linear-cli.py -w mycelium create --title "..." --team "..." \
+      --description "[source: canonical-key]"          # Create issue
 
 Features:
   - Zero boilerplate: load workspace registry from admin.env automatically
@@ -24,12 +25,18 @@ import sys
 from pathlib import Path
 from typing import Any
 
-# Add linear-mcp to path
-sys.path.insert(0, str(Path.home() / ".claude" / "linear-mcp"))
+# Prefer the package beside this script when run from a checkout. Fall back to
+# the standard local installation for a copied script.
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if (PROJECT_ROOT / "linear_mcp").is_dir():
+    sys.path.insert(0, str(PROJECT_ROOT))
+else:
+    sys.path.insert(0, str(Path.home() / ".claude" / "linear-mcp"))
 
-from linear_mcp.workspaces import WorkspaceRegistry
 from linear_mcp.client import LinearClient
 from linear_mcp import queries
+from linear_mcp.tools._common import assert_no_duplicate_source, assert_source_first_line
+from linear_mcp.workspaces import WorkspaceRegistry
 
 
 def load_registry() -> WorkspaceRegistry:
@@ -64,24 +71,38 @@ def format_issue(issue: dict) -> dict:
     }
 
 
+def fetch_issue(client: LinearClient, issue_id: str) -> dict:
+    """Fetch an issue by UUID or a human identifier such as ``MYC-116``."""
+    if "-" in issue_id and not _looks_like_uuid(issue_id):
+        team_key, _, number = issue_id.partition("-")
+        if team_key and number.isdigit():
+            result = client.request(
+                queries.GET_ISSUE_BY_IDENTIFIER,
+                {"team": team_key.upper(), "number": float(number)},
+            )
+            nodes = (result.get("issues") or {}).get("nodes") or []
+            return {"issue": nodes[0] if nodes else None}
+    # Keep values out of the GraphQL document so an identifier cannot change
+    # the query shape.
+    return client.request(queries.GET_ISSUE, {"id": issue_id})
+
+
+def _looks_like_uuid(value: str) -> bool:
+    """Cheap UUID heuristic used to distinguish UUIDs from issue identifiers."""
+    return (
+        len(value) == 36
+        and all(value[position] == "-" for position in (8, 13, 18, 23))
+        and all(character in "0123456789abcdefABCDEF-" for character in value)
+    )
+
+
 def cmd_get(args) -> None:
     """Fetch and display a single issue."""
     client, ws_name = get_client(args.workspace)
     
     try:
-        # Parse issue ID (supports both UUID and human identifier like MYC-116)
         issue_id = args.issue_id
-        
-        # Use GraphQL query directly
-        query = f"""
-        query {{
-          issue(id: "{issue_id}") {{
-            {queries.ISSUE_FIELDS}
-          }}
-        }}
-        """
-        
-        result = client.request(query)
+        result = fetch_issue(client, issue_id)
         issue = result.get("issue")
         
         if not issue:
@@ -94,8 +115,8 @@ def cmd_get(args) -> None:
             formatted = format_issue(issue)
             print(json.dumps(formatted, indent=2, default=str))
         
-        # Show rate limit
-        if args.verbose and client.last_rate_li        if args.verbose and cle limit: {client.last_rate_limit}", file=sys.stderr)
+        if args.verbose and client.last_rate_limit:
+            print(f"\nRate limit: {client.last_rate_limit}", file=sys.stderr)
     
     except Exception as e:
         print(f"Error fetching issue: {e}", file=sys.stderr)
@@ -107,23 +128,24 @@ def cmd_list(args) -> None:
     client, ws_name = get_client(args.workspace)
     
     try:
-        variables = {
-            "first": args.limit or 50,
-        }
-        
+        issue_filter: dict[str, Any] = {}
         if args.state:
-            variables["state"] = {"name": {"eqIgnoreCase": args.state}}
+            issue_filter["state"] = {"name": {"eqIgnoreCase": args.state}}
         if args.assignee:
             if args.assignee.lower() == "me":
-                variables["assignee"] = {"isMe": {"eq": True}}
+                issue_filter["assignee"] = {"isMe": {"eq": True}}
             else:
-                variables["assignee"] = {"id": {"eq": args.assignee}}
+                issue_filter["assignee"] = {"id": {"eq": args.assignee}}
         if args.team:
-            variables["team"] = {"id": {"eq": args.team}}
+            issue_filter["team"] = {"id": {"eq": args.team}}
         if args.project:
-            variables["project"] = {"id": {"eq": args.project}}
+            issue_filter["project"] = {"id": {"eq": args.project}}
         if args.query:
-            variables["searchableContent"] = {"contains": args.query}
+            issue_filter["searchableContent"] = {"contains": args.query}
+
+        variables: dict[str, Any] = {"first": args.limit or 50}
+        if issue_filter:
+            variables["filter"] = issue_filter
         
         result = client.request(queries.LIST_ISSUES, variables)
         issues = result.get("issues", {}).get("nodes", [])
@@ -165,7 +187,7 @@ def cmd_update(args) -> None:
                 input_payload["assigneeId"] = viewer.get("id")
             else:
                 input_payload["assigneeId"] = args.assignee
-                             rity is not None:
+        if args.priority is not None:
             input_payload["priority"] = args.priority
         
         if not input_payload:
@@ -199,7 +221,7 @@ def cmd_search(args) -> None:
     
     try:
         result = client.request(queries.SEARCH_ISSUES, {
-            "query": args.query,
+            "term": args.query,
             "first": args.limit or 50,
         })
         
@@ -217,6 +239,58 @@ def cmd_search(args) -> None:
     
     except Exception as e:
         print(f"Error searching: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def cmd_create(args) -> None:
+    """Create an issue with the same substrate checks as the MCP tool."""
+    client, ws_name = get_client(args.workspace)
+
+    try:
+        canonical_key = assert_source_first_line(
+            args.description,
+            tool="linear-cli create",
+            field="description",
+        )
+        if canonical_key:
+            assert_no_duplicate_source(
+                client,
+                canonical_key,
+                query=queries.SEARCH_ISSUES,
+                response_key="searchIssues",
+                tool="linear-cli create",
+                save_param="id",
+            )
+
+        input_payload: dict[str, Any] = {
+            "title": args.title,
+            "description": args.description,
+            "teamId": args.team,
+        }
+        if args.parent:
+            input_payload["parentId"] = args.parent
+        if args.priority is not None:
+            input_payload["priority"] = args.priority
+        if args.label:
+            input_payload["labelIds"] = args.label
+
+        result = client.request(queries.ISSUE_CREATE, {"input": input_payload})
+        issue = (result.get("issueCreate") or {}).get("issue")
+        if not issue:
+            print("Linear did not return the created issue", file=sys.stderr)
+            sys.exit(1)
+
+        if args.json:
+            print(json.dumps(issue, indent=2, default=str))
+        else:
+            fmt = format_issue(issue)
+            print(f"Created: {fmt['identifier']}: {fmt['title']}")
+
+        if args.verbose and client.last_rate_limit:
+            print(f"\nRate limit: {client.last_rate_limit}", file=sys.stderr)
+
+    except Exception as e:
+        print(f"Error creating issue: {e}", file=sys.stderr)
         sys.exit(1)
 
 
@@ -242,7 +316,10 @@ def main():
         help="Show rate-limit info and debug output",
     )
     
-    subparsers = parser.add_subparsers(dest="command", help="Comma    subparsers = parser.add_subparsers(dest="command", help="Comma    subparsers = parsh issue details")
+    subparsers = parser.add_subparsers(dest="command", help="Command")
+
+    # get <issue-id>
+    get_parser = subparsers.add_parser("get", help="Fetch issue details")
     get_parser.add_argument("issue_id", help="Issue ID or identifier (e.g., MYC-116)")
     get_parser.set_defaults(func=cmd_get)
     
@@ -261,7 +338,7 @@ def main():
     update_parser.add_argument("issue_id", help="Issue ID or identifier")
     update_parser.add_argument("--state", help="New state (e.g., Done, Todo)")
     update_parser.add_argument("--assignee", help="New assignee (or 'me')")
-    update_parser.add_argument("--priority", type=int, help="Priority (0-4)")
+    update_parser.add_argument("--priority", type=int, choices=range(5), help="Priority (0-4)")
     update_parser.set_defaults(func=cmd_update)
     
     # search <query>
@@ -269,6 +346,24 @@ def main():
     search_parser.add_argument("query", help="Search query")
     search_parser.add_argument("--limit", type=int, default=50, help="Max results")
     search_parser.set_defaults(func=cmd_search)
+
+    # create --title <title> --team <team-id> --description <source-backed body>
+    create_parser = subparsers.add_parser("create", help="Create issue")
+    create_parser.add_argument("--title", required=True, help="Issue title")
+    create_parser.add_argument("--team", required=True, help="Team ID")
+    create_parser.add_argument(
+        "--description",
+        required=True,
+        help="Description beginning with [source: <canonical-key>]",
+    )
+    create_parser.add_argument("--parent", help="Optional parent issue ID")
+    create_parser.add_argument("--priority", type=int, choices=range(5), help="Priority (0-4)")
+    create_parser.add_argument(
+        "--label",
+        action="append",
+        help="Label ID to apply; repeat for multiple labels",
+    )
+    create_parser.set_defaults(func=cmd_create)
     
     args = parser.parse_args()
     
