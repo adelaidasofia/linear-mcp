@@ -59,12 +59,14 @@ def get_client(workspace: str | None) -> tuple[LinearClient, str]:
 
 def format_issue(issue: dict) -> dict:
     """Format issue dict for display."""
+    state = issue.get("state") or {}
+    assignee = issue.get("assignee") or {}
     return {
         "id": issue.get("id"),
         "identifier": issue.get("identifier"),
         "title": issue.get("title"),
-        "state": issue.get("state", {}).get("name"),
-        "assignee": issue.get("assignee", {}).get("name"),
+        "state": state.get("name"),
+        "assignee": assignee.get("name"),
         "priority": issue.get("priorityLabel"),
         "url": issue.get("url"),
         "updated": issue.get("updatedAt"),
@@ -174,7 +176,7 @@ def cmd_update(args) -> None:
         if args.state:
             # Resolve state name to state ID
             states_result = client.request(queries.LIST_ISSUE_STATUSES)
-            states = states_result.get("issueStatuses", {}).get("nodes", [])
+            states = (states_result.get("workflowStates") or {}).get("nodes") or []
             state_id = next((s["id"] for s in states if s["name"].lower() == args.state.lower()), None)
             if not state_id:
                 print(f"State not found: {args.state}", file=sys.stderr)

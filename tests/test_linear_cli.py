@@ -107,7 +107,13 @@ def test_get_resolves_human_identifier(cli_module, monkeypatch) -> None:
 
 
 def test_create_applies_source_checks_and_optional_fields(cli_module, monkeypatch, capsys) -> None:
-    issue = {"id": "issue-id", "identifier": "MYC-2", "title": "Native client", "state": {}, "assignee": {}}
+    issue = {
+        "id": "issue-id",
+        "identifier": "MYC-2",
+        "title": "Native client",
+        "state": None,
+        "assignee": None,
+    }
     client = FakeClient({cli_module.queries.ISSUE_CREATE: {"issueCreate": {"issue": issue}}})
     monkeypatch.setattr(cli_module, "get_client", lambda workspace: (client, "test"))
     source_calls: list[tuple] = []
@@ -157,6 +163,52 @@ def test_create_applies_source_checks_and_optional_fields(cli_module, monkeypatc
         )
     ]
     assert capsys.readouterr().out == "Created: MYC-2: Native client\n"
+
+
+def test_update_resolves_named_state_from_workflow_states(cli_module, monkeypatch, capsys) -> None:
+    client = FakeClient(
+        {
+            cli_module.queries.LIST_ISSUE_STATUSES: {
+                "workflowStates": {
+                    "nodes": [
+                        {"id": "todo-id", "name": "Todo"},
+                        {"id": "done-id", "name": "Done"},
+                    ]
+                }
+            },
+            cli_module.queries.ISSUE_UPDATE: {
+                "issueUpdate": {
+                    "issue": {
+                        "identifier": "MYC-3",
+                        "state": {"name": "Done"},
+                        "assignee": None,
+                    }
+                }
+            },
+        }
+    )
+    monkeypatch.setattr(cli_module, "get_client", lambda workspace: (client, "test"))
+
+    cli_module.cmd_update(
+        Namespace(
+            workspace=None,
+            issue_id="MYC-3",
+            state="done",
+            assignee=None,
+            priority=None,
+            json=False,
+            verbose=False,
+        )
+    )
+
+    assert client.calls == [
+        (cli_module.queries.LIST_ISSUE_STATUSES, None),
+        (
+            cli_module.queries.ISSUE_UPDATE,
+            {"id": "MYC-3", "input": {"stateId": "done-id"}},
+        ),
+    ]
+    assert capsys.readouterr().out == "Updated: MYC-3 → Done\n"
 
 
 def test_update_keeps_zero_priority(cli_module, monkeypatch) -> None:
