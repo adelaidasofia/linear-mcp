@@ -159,10 +159,18 @@ def _http_client(token: str) -> httpx.Client:
             f"refused (SSRF): LINEAR_API_URL fails URL safety check: {exc}"
         ) from exc
 
+    # TLS-intercepting AV/proxies (Norton Web/Mail Shield, Zscaler, ...) re-sign
+    # certs with a private root that certifi does not carry, so verification fails
+    # with CERTIFICATE_VERIFY_FAILED. Honor an explicit bundle set in admin.env
+    # (read into os.environ at import), since an OS-level SSL_CERT_FILE only
+    # reaches processes started after it was set. Falls back to certifi.
+    ca_bundle = os.environ.get("LINEAR_CA_BUNDLE") or os.environ.get("SSL_CERT_FILE")
+
     return httpx.Client(
         base_url=safe_url,
         timeout=TIMEOUT,
         follow_redirects=False,
+        verify=ca_bundle if ca_bundle else True,
         headers={
             "Authorization": token,
             "Content-Type": "application/json",
