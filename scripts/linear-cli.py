@@ -57,7 +57,7 @@ def format_issue(issue: dict) -> dict:
         "identifier": issue.get("identifier"),
         "title": issue.get("title"),
         "state": issue.get("state", {}).get("name"),
-        "assignee": issue.get("assignee", {}).get("name"),
+        "assignee": (issue.get("assignee") or {}).get("name"),
         "priority": issue.get("priorityLabel"),
         "url": issue.get("url"),
         "updated": issue.get("updatedAt"),
@@ -95,7 +95,8 @@ def cmd_get(args) -> None:
             print(json.dumps(formatted, indent=2, default=str))
         
         # Show rate limit
-        if args.verbose and client.last_rate_li        if args.verbose and cle limit: {client.last_rate_limit}", file=sys.stderr)
+        if args.verbose and client.last_rate_limit:
+            print(f"\nRate limit: {client.last_rate_limit}", file=sys.stderr)
     
     except Exception as e:
         print(f"Error fetching issue: {e}", file=sys.stderr)
@@ -107,24 +108,25 @@ def cmd_list(args) -> None:
     client, ws_name = get_client(args.workspace)
     
     try:
-        variables = {
-            "first": args.limit or 50,
-        }
-        
+        filt = {}
         if args.state:
-            variables["state"] = {"name": {"eqIgnoreCase": args.state}}
+            filt["state"] = {"name": {"eqIgnoreCase": args.state}}
         if args.assignee:
             if args.assignee.lower() == "me":
-                variables["assignee"] = {"isMe": {"eq": True}}
+                filt["assignee"] = {"isMe": {"eq": True}}
             else:
-                variables["assignee"] = {"id": {"eq": args.assignee}}
+                filt["assignee"] = {"id": {"eq": args.assignee}}
         if args.team:
-            variables["team"] = {"id": {"eq": args.team}}
+            filt["team"] = {"id": {"eq": args.team}}
         if args.project:
-            variables["project"] = {"id": {"eq": args.project}}
+            filt["project"] = {"id": {"eq": args.project}}
         if args.query:
-            variables["searchableContent"] = {"contains": args.query}
-        
+            filt["searchableContent"] = {"contains": args.query}
+
+        variables = {"first": args.limit or 50}
+        if filt:
+            variables["filter"] = filt
+
         result = client.request(queries.LIST_ISSUES, variables)
         issues = result.get("issues", {}).get("nodes", [])
         
@@ -150,14 +152,21 @@ def cmd_update(args) -> None:
     try:
         input_payload = {}
         if args.state:
-            # Resolve state name to state ID
-            states_result = client.request(queries.LIST_ISSUE_STATUSES)
-            states = states_result.get("issueStatuses", {}).get("nodes", [])
-            state_id = next((s["id"] for s in states if s["name"].lower() == args.state.lower()), None)
-            if not state_id:
+            # Resolve state name to state ID, scoped to the issue's team
+            # (the identifier prefix, e.g. MYC-116 -> team key MYC).
+            states_result = client.request(queries.LIST_ISSUE_STATUSES, {
+                "first": 100,
+                "filter": {"name": {"eqIgnoreCase": args.state}},
+            })
+            states = states_result.get("workflowStates", {}).get("nodes", [])
+            team_key = args.issue_id.split("-")[0].upper() if "-" in args.issue_id else None
+            if team_key:
+                keyed = [s for s in states if (s.get("team") or {}).get("key") == team_key]
+                states = keyed or states
+            if not states:
                 print(f"State not found: {args.state}", file=sys.stderr)
                 sys.exit(1)
-            input_payload["stateId"] = state_id
+            input_payload["stateId"] = states[0]["id"]
         
         if args.assignee:
             if args.assignee.lower() == "me":
@@ -165,7 +174,8 @@ def cmd_update(args) -> None:
                 input_payload["assigneeId"] = viewer.get("id")
             else:
                 input_payload["assigneeId"] = args.assignee
-                             rity is not None:
+
+        if args.priority is not None:
             input_payload["priority"] = args.priority
         
         if not input_payload:
@@ -190,6 +200,79 @@ def cmd_update(args) -> None:
     
     except Exception as e:
         print(f"Error updating issue: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def cmd_comment(args) -> None:
+    """Add a comment to an issue."""
+    client, ws_name = get_client(args.workspace)
+
+    try:
+        mutation = """
+        mutation CommentCreate($input: CommentCreateInput!) {
+          commentCreate(input: $input) {
+            success
+            comment { id url }
+          }
+        }
+        """
+        result = client.request(mutation, {
+            "input": {"issueId": args.issue_id, "body": args.body},
+        })
+        payload = result.get("commentCreate", {})
+        if not payload.get("success"):
+            print(f"Comment failed on {args.issue_id}", file=sys.stderr)
+            sys.exit(1)
+        comment = payload.get("comment") or {}
+        if args.json:
+            print(json.dumps(comment, indent=2, default=str))
+        else:
+            print(f"Commented on {args.issue_id}: {comment.get('url')}")
+    except Exception as e:
+        print(f"Error commenting: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def cmd_create(args) -> None:
+    """Create an issue on a team (default: MYC)."""
+    client, ws_name = get_client(args.workspace)
+
+    try:
+        team_key = (args.team_key or "MYC").upper()
+        teams = client.request(
+            "query($f: TeamFilter) { teams(filter: $f) { nodes { id key } } }",
+            {"f": {"key": {"eq": team_key}}},
+        ).get("teams", {}).get("nodes", [])
+        if not teams:
+            print(f"Team not found: {team_key}", file=sys.stderr)
+            sys.exit(1)
+        payload = {
+            "teamId": teams[0]["id"],
+            "title": args.title,
+            "description": args.description or "",
+        }
+        if args.priority is not None:
+            payload["priority"] = args.priority
+        mutation = """
+        mutation IssueCreate($input: IssueCreateInput!) {
+          issueCreate(input: $input) {
+            success
+            issue { identifier url }
+          }
+        }
+        """
+        result = client.request(mutation, {"input": payload})
+        out = result.get("issueCreate", {})
+        if not out.get("success"):
+            print("Issue creation failed", file=sys.stderr)
+            sys.exit(1)
+        issue = out.get("issue") or {}
+        if args.json:
+            print(json.dumps(issue, indent=2, default=str))
+        else:
+            print(f"Created {issue.get('identifier')}: {issue.get('url')}")
+    except Exception as e:
+        print(f"Error creating issue: {e}", file=sys.stderr)
         sys.exit(1)
 
 
@@ -242,7 +325,10 @@ def main():
         help="Show rate-limit info and debug output",
     )
     
-    subparsers = parser.add_subparsers(dest="command", help="Comma    subparsers = parser.add_subparsers(dest="command", help="Comma    subparsers = parsh issue details")
+    subparsers = parser.add_subparsers(dest="command", help="Command")
+
+    # get <issue-id>
+    get_parser = subparsers.add_parser("get", help="Fetch issue details")
     get_parser.add_argument("issue_id", help="Issue ID or identifier (e.g., MYC-116)")
     get_parser.set_defaults(func=cmd_get)
     
@@ -264,6 +350,20 @@ def main():
     update_parser.add_argument("--priority", type=int, help="Priority (0-4)")
     update_parser.set_defaults(func=cmd_update)
     
+    # create --title ... [--description ...] [--priority N] [--team-key MYC]
+    create_parser = subparsers.add_parser("create", help="Create an issue")
+    create_parser.add_argument("--title", required=True, help="Issue title")
+    create_parser.add_argument("--description", help="Issue description (markdown)")
+    create_parser.add_argument("--priority", type=int, help="Priority (0-4)")
+    create_parser.add_argument("--team-key", help="Team key (default: MYC)")
+    create_parser.set_defaults(func=cmd_create)
+
+    # comment <issue-id> <body>
+    comment_parser = subparsers.add_parser("comment", help="Add a comment")
+    comment_parser.add_argument("issue_id", help="Issue ID or identifier")
+    comment_parser.add_argument("body", help="Comment body (markdown)")
+    comment_parser.set_defaults(func=cmd_comment)
+
     # search <query>
     search_parser = subparsers.add_parser("search", help="Full-text search")
     search_parser.add_argument("query", help="Search query")
