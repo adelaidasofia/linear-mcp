@@ -202,7 +202,10 @@ def test_update_resolves_named_state_from_workflow_states(cli_module, monkeypatc
     )
 
     assert client.calls == [
-        (cli_module.queries.LIST_ISSUE_STATUSES, None),
+        (
+            cli_module.queries.LIST_ISSUE_STATUSES,
+            {"first": 100, "filter": {"name": {"eqIgnoreCase": "done"}}},
+        ),
         (
             cli_module.queries.ISSUE_UPDATE,
             {"id": "MYC-3", "input": {"stateId": "done-id"}},
@@ -222,3 +225,87 @@ def test_update_keeps_zero_priority(cli_module, monkeypatch) -> None:
     assert client.calls == [
         (cli_module.queries.ISSUE_UPDATE, {"id": "issue-id", "input": {"priority": 0}})
     ]
+
+
+def test_update_scopes_state_to_the_issue_team_when_name_is_ambiguous(cli_module, monkeypatch) -> None:
+    """Two teams sharing a state name must not let the wrong one win.
+
+    Regression for the class of bug fixed in this reconciliation: an
+    unscoped ``next(...)`` pick over every workspace's workflow states
+    would silently take whichever team's "Done" came first, setting the
+    wrong team's stateId on the issue. MYC-3's own "Done" must win here
+    even though OND's "Done" sorts first in the (fake) server response.
+    """
+    client = FakeClient(
+        {
+            cli_module.queries.LIST_ISSUE_STATUSES: {
+                "workflowStates": {
+                    "nodes": [
+                        {"id": "ond-done-id", "name": "Done", "team": {"key": "OND"}},
+                        {"id": "myc-done-id", "name": "Done", "team": {"key": "MYC"}},
+                    ]
+                }
+            },
+            cli_module.queries.ISSUE_UPDATE: {
+                "issueUpdate": {"issue": {"identifier": "MYC-3", "state": {"name": "Done"}, "assignee": None}}
+            },
+        }
+    )
+    monkeypatch.setattr(cli_module, "get_client", lambda workspace: (client, "test"))
+
+    cli_module.cmd_update(
+        Namespace(
+            workspace=None,
+            issue_id="MYC-3",
+            state="done",
+            assignee=None,
+            priority=None,
+            json=False,
+            verbose=False,
+        )
+    )
+
+    assert client.calls[1] == (
+        cli_module.queries.ISSUE_UPDATE,
+        {"id": "MYC-3", "input": {"stateId": "myc-done-id"}},
+    )
+
+
+def test_comment_posts_body_and_prints_the_url(cli_module, monkeypatch, capsys) -> None:
+    client = FakeClient(
+        {
+            cli_module.queries.COMMENT_CREATE: {
+                "commentCreate": {
+                    "success": True,
+                    "comment": {"id": "cmt-1", "url": "https://linear.app/mycelium/issue/MYC-3#comment-cmt-1"},
+                }
+            }
+        }
+    )
+    monkeypatch.setattr(cli_module, "get_client", lambda workspace: (client, "test"))
+
+    cli_module.cmd_comment(
+        Namespace(workspace=None, issue_id="MYC-3", body="Deployed and verified.", json=False, verbose=False)
+    )
+
+    assert client.calls == [
+        (
+            cli_module.queries.COMMENT_CREATE,
+            {"input": {"issueId": "MYC-3", "body": "Deployed and verified."}},
+        )
+    ]
+    assert capsys.readouterr().out == (
+        "Commented on MYC-3: https://linear.app/mycelium/issue/MYC-3#comment-cmt-1\n"
+    )
+
+
+def test_comment_exits_nonzero_when_linear_reports_failure(cli_module, monkeypatch) -> None:
+    client = FakeClient(
+        {cli_module.queries.COMMENT_CREATE: {"commentCreate": {"success": False, "comment": None}}}
+    )
+    monkeypatch.setattr(cli_module, "get_client", lambda workspace: (client, "test"))
+
+    with pytest.raises(SystemExit):
+        cli_module.cmd_comment(
+            Namespace(workspace=None, issue_id="MYC-3", body="x", json=False, verbose=False)
+        )

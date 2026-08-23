@@ -9,6 +9,7 @@ Usage:
   python3 linear-cli.py -w mycelium search "keyword"   # Full-text search
   python3 linear-cli.py -w mycelium create --title "..." --team "..." \
       --description "[source: canonical-key]"          # Create issue
+  python3 linear-cli.py comment MYC-116 "Deployed and verified."
 
 Features:
   - Zero boilerplate: load workspace registry from admin.env automatically
@@ -101,25 +102,25 @@ def _looks_like_uuid(value: str) -> bool:
 def cmd_get(args) -> None:
     """Fetch and display a single issue."""
     client, ws_name = get_client(args.workspace)
-    
+
     try:
         issue_id = args.issue_id
         result = fetch_issue(client, issue_id)
         issue = result.get("issue")
-        
+
         if not issue:
             print(f"Issue not found: {issue_id}", file=sys.stderr)
             sys.exit(1)
-        
+
         if args.json:
             print(json.dumps(issue, indent=2, default=str))
         else:
             formatted = format_issue(issue)
             print(json.dumps(formatted, indent=2, default=str))
-        
+
         if args.verbose and client.last_rate_limit:
             print(f"\nRate limit: {client.last_rate_limit}", file=sys.stderr)
-    
+
     except Exception as e:
         print(f"Error fetching issue: {e}", file=sys.stderr)
         sys.exit(1)
@@ -128,7 +129,7 @@ def cmd_get(args) -> None:
 def cmd_list(args) -> None:
     """List issues with optional filters."""
     client, ws_name = get_client(args.workspace)
-    
+
     try:
         issue_filter: dict[str, Any] = {}
         if args.state:
@@ -148,20 +149,20 @@ def cmd_list(args) -> None:
         variables: dict[str, Any] = {"first": args.limit or 50}
         if issue_filter:
             variables["filter"] = issue_filter
-        
+
         result = client.request(queries.LIST_ISSUES, variables)
         issues = result.get("issues", {}).get("nodes", [])
-        
+
         if args.json:
             print(json.dumps(issues, indent=2, default=str))
         else:
             for issue in issues:
                 fmt = format_issue(issue)
                 print(f"{fmt['identifier']:12} {fmt['title'][:50]:50} {fmt['state']:12} {fmt['assignee'] or 'unassigned':20}")
-        
+
         if args.verbose and client.last_rate_limit:
             print(f"\nRate limit: {client.last_rate_limit}", file=sys.stderr)
-    
+
     except Exception as e:
         print(f"Error listing issues: {e}", file=sys.stderr)
         sys.exit(1)
@@ -170,19 +171,34 @@ def cmd_list(args) -> None:
 def cmd_update(args) -> None:
     """Update an issue."""
     client, ws_name = get_client(args.workspace)
-    
+
     try:
         input_payload = {}
         if args.state:
-            # Resolve state name to state ID
-            states_result = client.request(queries.LIST_ISSUE_STATUSES)
-            states = (states_result.get("workflowStates") or {}).get("nodes") or []
-            state_id = next((s["id"] for s in states if s["name"].lower() == args.state.lower()), None)
-            if not state_id:
+            # Resolve state name to state ID, scoped to the issue's team
+            # (the identifier prefix, e.g. MYC-116 -> team key MYC). Two
+            # teams commonly share a state name ("Todo", "Done"); without
+            # the team scope the first textual match wins, which can set
+            # the WRONG team's state id on the issue.
+            states_result = client.request(queries.LIST_ISSUE_STATUSES, {
+                "first": 100,
+                "filter": {"name": {"eqIgnoreCase": args.state}},
+            })
+            states = states_result.get("workflowStates", {}).get("nodes", [])
+            # Defense in depth: match by name here too rather than trusting
+            # the server filter alone, so a response that (for whatever
+            # reason) includes non-matching states doesn't silently pick one.
+            named = [s for s in states if (s.get("name") or "").lower() == args.state.lower()]
+            states = named or states
+            team_key = args.issue_id.split("-")[0].upper() if "-" in args.issue_id else None
+            if team_key:
+                keyed = [s for s in states if (s.get("team") or {}).get("key") == team_key]
+                states = keyed or states
+            if not states:
                 print(f"State not found: {args.state}", file=sys.stderr)
                 sys.exit(1)
-            input_payload["stateId"] = state_id
-        
+            input_payload["stateId"] = states[0]["id"]
+
         if args.assignee:
             if args.assignee.lower() == "me":
                 viewer = client.viewer()
@@ -191,27 +207,27 @@ def cmd_update(args) -> None:
                 input_payload["assigneeId"] = args.assignee
         if args.priority is not None:
             input_payload["priority"] = args.priority
-        
+
         if not input_payload:
             print("No fields to update", file=sys.stderr)
             sys.exit(1)
-        
+
         result = client.request(queries.ISSUE_UPDATE, {
             "id": args.issue_id,
             "input": input_payload,
         })
-        
+
         updated_issue = result.get("issueUpdate", {}).get("issue", {})
-        
+
         if args.json:
             print(json.dumps(updated_issue, indent=2, default=str))
         else:
             fmt = format_issue(updated_issue)
             print(f"Updated: {fmt['identifier']} → {fmt['state']}")
-        
+
         if args.verbose and client.last_rate_limit:
             print(f"\nRate limit: {client.last_rate_limit}", file=sys.stderr)
-    
+
     except Exception as e:
         print(f"Error updating issue: {e}", file=sys.stderr)
         sys.exit(1)
@@ -220,25 +236,25 @@ def cmd_update(args) -> None:
 def cmd_search(args) -> None:
     """Full-text search across issues."""
     client, ws_name = get_client(args.workspace)
-    
+
     try:
         result = client.request(queries.SEARCH_ISSUES, {
             "term": args.query,
             "first": args.limit or 50,
         })
-        
+
         issues = result.get("searchIssues", {}).get("nodes", [])
-        
+
         if args.json:
             print(json.dumps(issues, indent=2, default=str))
         else:
             for issue in issues:
                 fmt = format_issue(issue)
                 print(f"{fmt['identifier']:12} {fmt['title'][:60]:60} {fmt['state']:12}")
-        
+
         if args.verbose and client.last_rate_limit:
             print(f"\nRate limit: {client.last_rate_limit}", file=sys.stderr)
-    
+
     except Exception as e:
         print(f"Error searching: {e}", file=sys.stderr)
         sys.exit(1)
@@ -296,13 +312,40 @@ def cmd_create(args) -> None:
         sys.exit(1)
 
 
+def cmd_comment(args) -> None:
+    """Add a comment to an issue."""
+    client, ws_name = get_client(args.workspace)
+
+    try:
+        result = client.request(queries.COMMENT_CREATE, {
+            "input": {"issueId": args.issue_id, "body": args.body},
+        })
+        payload = result.get("commentCreate") or {}
+        if not payload.get("success"):
+            print(f"Comment failed on {args.issue_id}", file=sys.stderr)
+            sys.exit(1)
+        comment = payload.get("comment") or {}
+
+        if args.json:
+            print(json.dumps(comment, indent=2, default=str))
+        else:
+            print(f"Commented on {args.issue_id}: {comment.get('url')}")
+
+        if args.verbose and client.last_rate_limit:
+            print(f"\nRate limit: {client.last_rate_limit}", file=sys.stderr)
+
+    except Exception as e:
+        print(f"Error commenting: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Fast Linear issue operations",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
-    
+
     parser.add_argument(
         "-w", "--workspace",
         help="Workspace alias (default: primary from admin.env)",
@@ -317,14 +360,14 @@ def main():
         action="store_true",
         help="Show rate-limit info and debug output",
     )
-    
+
     subparsers = parser.add_subparsers(dest="command", help="Command")
 
     # get <issue-id>
     get_parser = subparsers.add_parser("get", help="Fetch issue details")
     get_parser.add_argument("issue_id", help="Issue ID or identifier (e.g., MYC-116)")
     get_parser.set_defaults(func=cmd_get)
-    
+
     # list [filters]
     list_parser = subparsers.add_parser("list", help="List issues")
     list_parser.add_argument("--state", help="Filter by state (e.g., Todo, Done)")
@@ -334,7 +377,7 @@ def main():
     list_parser.add_argument("--query", help="Full-text search")
     list_parser.add_argument("--limit", type=int, default=50, help="Max results (default: 50)")
     list_parser.set_defaults(func=cmd_list)
-    
+
     # update <issue-id> [fields]
     update_parser = subparsers.add_parser("update", help="Update issue")
     update_parser.add_argument("issue_id", help="Issue ID or identifier")
@@ -342,7 +385,7 @@ def main():
     update_parser.add_argument("--assignee", help="New assignee (or 'me')")
     update_parser.add_argument("--priority", type=int, choices=range(5), help="Priority (0-4)")
     update_parser.set_defaults(func=cmd_update)
-    
+
     # search <query>
     search_parser = subparsers.add_parser("search", help="Full-text search")
     search_parser.add_argument("query", help="Search query")
@@ -366,13 +409,19 @@ def main():
         help="Label ID to apply; repeat for multiple labels",
     )
     create_parser.set_defaults(func=cmd_create)
-    
+
+    # comment <issue-id> <body>
+    comment_parser = subparsers.add_parser("comment", help="Add a comment to an issue")
+    comment_parser.add_argument("issue_id", help="Issue ID or identifier")
+    comment_parser.add_argument("body", help="Comment body (markdown)")
+    comment_parser.set_defaults(func=cmd_comment)
+
     args = parser.parse_args()
-    
+
     if not args.command:
         parser.print_help()
         sys.exit(1)
-    
+
     args.func(args)
 
 

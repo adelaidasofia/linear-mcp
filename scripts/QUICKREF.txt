@@ -20,7 +20,19 @@ LIST ISSUES
 UPDATE ISSUE
   linear update MYC-116 --state "Done"  # Change state
   linear update MYC-116 --assignee "me" # Assign to yourself
-  linear update MYC-116 --priority 2    # Set priority (0-4  linear update MYC-116 --priority 2    # Set priority (0-4  linear update MYC-116ch mycelium "OpenTelemetry" --limit 20
+  linear update MYC-116 --priority 2    # Set priority (0-4)
+
+CREATE ISSUE
+  linear create --title "Fix the gate" --team <team-id> \
+      --description "[source: <path-or-ticket>] ..." --priority 3
+  # --team and --description are required; description must start with
+  # a "[source: ...]" line (see linear-scope-overlap-check.md).
+
+COMMENT
+  linear comment MYC-116 "Deployed and verified."
+
+SEARCH
+  linear search mycelium "OpenTelemetry" --limit 20
 
 RATE LIMITS
   linear list mycelium -v               # Show rate limit info
