@@ -16,6 +16,55 @@ from ._common import client_for, run_tool, page_summary
 VALID_TYPES = ("blocks", "duplicate", "related")
 
 
+def _issue_relation_summary(result: dict[str, Any]) -> str:
+    return page_summary(result, "issueRelations")
+
+
+def _merge_issue_relation_pages(result: dict[str, Any]) -> dict[str, Any]:
+    """Normalize Issue.relations + inverseRelations to issueRelations.
+
+    Linear removed `IssueRelationFilter` from the top-level
+    `issueRelations` connection. Issue-scoped reads now have to come from
+    `issue(id) { relations inverseRelations }`. Returning the historical
+    `{"issueRelations": ...}` shape keeps the MCP tool contract stable for
+    callers while adding a small `direction` hint per node.
+    """
+    issue = result.get("issue") or {}
+    issue_id = issue.get("id")
+    nodes_by_id: dict[str, dict[str, Any]] = {}
+    for page_name, direction in (
+        ("relations", "outgoing"),
+        ("inverseRelations", "incoming"),
+    ):
+        for node in ((issue.get(page_name) or {}).get("nodes") or []):
+            enriched = dict(node)
+            enriched["direction"] = direction
+            nodes_by_id[enriched["id"]] = enriched
+
+    direct_page = (issue.get("relations") or {}).get("pageInfo") or {}
+    inverse_page = (issue.get("inverseRelations") or {}).get("pageInfo") or {}
+    return {
+        "issue": {
+            "id": issue_id,
+            "identifier": issue.get("identifier"),
+            "title": issue.get("title"),
+        },
+        "issueRelations": {
+            "nodes": list(nodes_by_id.values()),
+            "pageInfo": {
+                "hasNextPage": bool(
+                    direct_page.get("hasNextPage")
+                    or inverse_page.get("hasNextPage")
+                ),
+                "endCursor": (
+                    direct_page.get("endCursor")
+                    or inverse_page.get("endCursor")
+                ),
+            },
+        },
+    }
+
+
 def register(mcp) -> None:
     @mcp.tool()
     def list_issue_relations(workspace: str | None = None, first: int = 50,
@@ -26,11 +75,20 @@ def register(mcp) -> None:
                   "issue_id": issue_id}
         variables: dict[str, Any] = {"first": first, "after": after}
         if issue_id:
-            variables["filter"] = {"issue": {"id": {"eq": issue_id}}}
+            variables["id"] = issue_id
+            fetch = lambda: _merge_issue_relation_pages(
+                client_for(workspace).request(
+                    queries.GET_ISSUE_RELATIONS, variables
+                )
+            )
+        else:
+            fetch = lambda: client_for(workspace).request(
+                queries.LIST_ISSUE_RELATIONS, variables
+            )
         return run_tool(
             "list_issue_relations", params,
-            lambda: client_for(workspace).request(queries.LIST_ISSUE_RELATIONS, variables),
-            lambda r: page_summary(r, "issueRelations"),
+            fetch,
+            _issue_relation_summary,
         )
 
     @mcp.tool()

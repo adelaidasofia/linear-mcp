@@ -614,16 +614,32 @@ mutation AttachmentDelete($id: String!) {
 
 RELATION_FIELDS = """
   id type
-  issue { id identifier title }
-  relatedIssue { id identifier title }
+  issue { id identifier title state { id name type color } }
+  relatedIssue { id identifier title state { id name type color } }
   createdAt updatedAt
 """
 
 LIST_ISSUE_RELATIONS = f"""
-query ListIssueRelations($first: Int, $after: String, $filter: IssueRelationFilter) {{
-  issueRelations(first: $first, after: $after, filter: $filter) {{
+query ListIssueRelations($first: Int, $after: String) {{
+  issueRelations(first: $first, after: $after) {{
     nodes {{ {RELATION_FIELDS} }}
     {PAGE_INFO}
+  }}
+}}
+"""
+
+GET_ISSUE_RELATIONS = f"""
+query GetIssueRelations($id: String!, $first: Int, $after: String) {{
+  issue(id: $id) {{
+    id identifier title
+    relations(first: $first, after: $after) {{
+      nodes {{ {RELATION_FIELDS} }}
+      {PAGE_INFO}
+    }}
+    inverseRelations(first: $first, after: $after) {{
+      nodes {{ {RELATION_FIELDS} }}
+      {PAGE_INFO}
+    }}
   }}
 }}
 """
